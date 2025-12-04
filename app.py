@@ -2,25 +2,19 @@ import streamlit as st
 import pandas as pd
 from datetime import date, datetime
 import requests
-from reportlab.lib.pagesizes import letter, A4
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
-from reportlab.lib.units import cm
-from io import BytesIO
 
 st.set_page_config(page_title="Fisco Chiaro Fatturazione", layout="wide", page_icon="📄")
 
 # Session state
-if 'fatture_emesse' not in st.session_state: 
-    st.session_state.fatture_emesse = pd.DataFrame()
-if 'fatture_ricevute' not in st.session_state: 
-    st.session_state.fatture_ricevute = pd.DataFrame()
-if 'clienti' not in st.session_state: 
-    st.session_state.clienti = pd.DataFrame()
-if 'righe_emesse' not in st.session_state: 
+if 'fatture_emesse' not in st.session_state:
+    st.session_state.fatture_emesse = pd.DataFrame(columns=["Numero","Data","Cliente","P.IVA","Totale","Stato"])
+if 'fatture_ricevute' not in st.session_state:
+    st.session_state.fatture_ricevute = pd.DataFrame(columns=["Numero","Data","Fornitore","P.IVA","Totale","Stato"])
+if 'clienti' not in st.session_state:
+    st.session_state.clienti = pd.DataFrame(columns=["Denominazione","P.IVA","Indirizzo"])
+if 'righe_emesse' not in st.session_state:
     st.session_state.righe_emesse = []
-if 'righe_ricevute' not in st.session_state: 
+if 'righe_ricevute' not in st.session_state:
     st.session_state.righe_ricevute = []
 
 # ========== SIDEBAR ==========
@@ -38,207 +32,187 @@ with st.sidebar:
         st.balloons()
 
 # ========== HEADER ==========
-st.markdown("# 📄 **Fatturazione Elettronica SdI PRO**")
-st.markdown("*Fisco Chiaro Consulting - Emesse | Ricevute | PDF | Clienti*")
+st.markdown("# 📄 **Fatturazione Elettronica SdI**")
+st.caption("Emesse | Ricevute | Clienti | Dashboard")
 
-# ========== TABS COMPLETE ==========
+# ========== TABS ==========
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "➕ Emesse", "👥 Clienti", "📥 Ricevute", 
-    "📋 Emesse", "📋 Ricevute", "📊 Dashboard"
+    "➕ Emesse", "👥 Clienti", "📥 Ricevute", "📋 Emesse", "📋 Ricevute", "📊 Dashboard"
 ])
 
-# ========== TAB 1: NUOVA FATTURA EMESSA ==========
+# ========== TAB 1: FATTURE EMESSE ==========
 with tab1:
-    st.header("➕ **Nuova Fattura da Emettere**")
-
-    # Selezione Cliente
+    st.header("➕ Nuova fattura emessa")
     col1, col2 = st.columns([2,1])
     with col1:
-        cliente_selezionato = st.selectbox("Seleziona Cliente", 
-            ["NUOVO"] + st.session_state.clienti["Denominazione"].tolist() if not st.session_state.clienti.empty else ["NUOVO"])
+        cliente_sel = st.selectbox(
+            "Seleziona cliente",
+            ["NUOVO"] + st.session_state.clienti["Denominazione"].tolist() if not st.session_state.clienti.empty else ["NUOVO"]
+        )
     with col2:
-        if st.button("➕ Nuovo Cliente"):
+        st.write("")
+        if st.button("➕ Nuovo cliente"):
             st.session_state.clienti = pd.concat([
-                st.session_state.clienti, 
-                pd.DataFrame({"Denominazione":[""], "P.IVA":[""], "Indirizzo":[""]})
+                st.session_state.clienti,
+                pd.DataFrame({"Denominazione":[""],"P.IVA":[""],"Indirizzo":[""]})
             ], ignore_index=True)
             st.rerun()
 
-    # Dati Cliente
-    if cliente_selezionato == "NUOVO":
-        cliente_data = {
-            "denominazione": st.text_input("Denominazione Cliente"),
-            "piva": st.text_input("P.IVA/CF"),
-            "indirizzo": st.text_area("Indirizzo", height=60)
-        }
+    if cliente_sel == "NUOVO" or st.session_state.clienti.empty:
+        denom = st.text_input("Denominazione cliente")
+        piva_cli = st.text_input("P.IVA/CF")
+        indirizzo_cli = st.text_area("Indirizzo", height=60)
     else:
-        idx = st.session_state.clienti[st.session_state.clienti["Denominazione"]==cliente_selezionato].index[0]
-        cliente_data = {
-            "denominazione": st.text_input("Denominazione", st.session_state.clienti.loc[idx, "Denominazione"]),
-            "piva": st.text_input("P.IVA/CF", st.session_state.clienti.loc[idx, "P.IVA"]),
-            "indirizzo": st.text_area("Indirizzo", st.session_state.clienti.loc[idx, "Indirizzo"], height=60)
-        }
+        idx = st.session_state.clienti[st.session_state.clienti["Denominazione"] == cliente_sel].index[0]
+        denom = st.text_input("Denominazione", st.session_state.clienti.loc[idx, "Denominazione"])
+        piva_cli = st.text_input("P.IVA/CF", st.session_state.clienti.loc[idx, "P.IVA"])
+        indirizzo_cli = st.text_area("Indirizzo", st.session_state.clienti.loc[idx, "Indirizzo"], height=60)
 
-    # Dati Fattura
-    col_f1, col_f2 = st.columns(2)
-    with col_f1: num = st.text_input("Numero", f"FT{date.today().strftime('%y%m%d')}-001")
-    with col_f2: data = st.date_input("Data", date.today())
-    codice_dest = st.text_input("Codice Dest.", value="0000000")
+    colf1, colf2 = st.columns(2)
+    with colf1:
+        num = st.text_input("Numero fattura", f"FT{date.today().strftime('%y%m%d')}-001")
+    with colf2:
+        data_fatt = st.date_input("Data fattura", date.today())
+    codice_dest = st.text_input("Codice destinatario", value="0000000")
 
-    # Righe
-    st.subheader("📦 Righe Fattura")
-    if st.button("➕ Aggiungi Riga"):
-        st.session_state.righe_emesse.append({"desc":"","qta":1,"prezzo":0,"iva":22})
+    st.subheader("📦 Righe")
+    if st.button("➕ Aggiungi riga"):
+        st.session_state.righe_emesse.append({"desc":"","qta":1,"prezzo":0.0,"iva":22})
         st.rerun()
 
     for i, r in enumerate(st.session_state.righe_emesse):
-        col1,col2,col3,col4 = st.columns(4)
-        with col1: r["desc"] = st.text_input("Descrizione", r.get("desc",""), key=f"de{i}")
-        with col2: r["qta"] = st.number_input("Q.tà", r.get("qta",1), key=f"qe{i}")
-        with col3: r["prezzo"] = st.number_input("Prezzo €", r.get("prezzo",0), key=f"pe{i}")
-        with col4: r["iva"] = st.selectbox("IVA%", [22,10,4,0], key=f"ie{i}")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            r["desc"] = st.text_input("Descrizione", r.get("desc",""), key=f"de_{i}")
+        with col2:
+            r["qta"] = st.number_input("Q.tà", r.get("qta",1.0), key=f"qe_{i}")
+        with col3:
+            r["prezzo"] = st.number_input("Prezzo €", r.get("prezzo",0.0), key=f"pe_{i}")
+        with col4:
+            r["iva"] = st.selectbox("IVA%", [22,10,5,4,0], key=f"ie_{i}")
 
-    # Riepilogo + PDF
-    if st.session_state.righe_emesse and cliente_data["denominazione"]:
+    if st.session_state.righe_emesse and denom:
         imponibile = sum(r["qta"]*r["prezzo"] for r in st.session_state.righe_emesse)
         iva = sum(r["qta"]*r["prezzo"]*r["iva"]/100 for r in st.session_state.righe_emesse)
         totale = imponibile + iva
 
-        col1,col2,col3 = st.columns(3)
-        col1.metric("Imponibile", f"€{imponibile:.2f}")
-        col2.metric("IVA", f"€{iva:.2f}")
-        col3.metric("**TOTALE**", f"€{totale:.2f}")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Imponibile", f"€{imponibile:.2f}")
+        c2.metric("IVA", f"€{iva:.2f}")
+        c3.metric("Totale", f"€{totale:.2f}")
 
-        col_pdf1, col_pdf2, col_pdf3 = st.columns(3)
-        with col_pdf1:
-            if st.button("👁️ **ANTEPRIMA**", use_container_width=True):
-                st.markdown(f"### **FATTURA {num}**")
-                st.markdown(f"**Cliente:** {cliente_data['denominazione']}")
-                st.markdown(f"**P.IVA:** {cliente_data['piva']}")
+        colb1, colb2 = st.columns(2)
+        with colb1:
+            if st.button("👁️ Anteprima fattura"):
+                st.write(f"**Fattura {num} - {denom}**")
+                st.write(f"P.IVA {piva_cli}")
                 for r in st.session_state.righe_emesse:
                     st.write(f"- {r['desc']} | {r['qta']} x €{r['prezzo']:.2f} | IVA {r['iva']}%")
-                st.markdown(f"**TOTALE: €{totale:.2f}**")
-
-        with col_pdf2:
-            if st.button("📄 **PDF**", use_container_width=True):
-                pdf_bytes = genera_pdf(num, data, cliente_data, st.session_state.righe_emesse, 
-                                     {"imponibile":imponibile, "iva":iva, "totale":totale}, piva_azienda, ragione_sociale)
-                st.download_button("📥 Scarica PDF", pdf_bytes, f"{num}.pdf", "application/pdf")
-
-        with col_pdf3:
-            if st.button("🚀 **INVIA SdI**", type="primary", use_container_width=True) and api_key:
-                st.success(f"✅ Fattura {num} inviata al SdI!")
-                new_row = pd.DataFrame({
-                    "Numero":[num], "Data":[str(data)], "Cliente":[cliente_data["denominazione"]],
-                    "P.IVA":[cliente_data["piva"]], "Totale":[totale], "Stato":["Inviata"]
+                st.write(f"**TOTALE: €{totale:.2f}**")
+        with colb2:
+            if st.button("💾 Salva fattura emessa", type="primary"):
+                nuova = pd.DataFrame({
+                    "Numero":[num],
+                    "Data":[str(data_fatt)],
+                    "Cliente":[denom],
+                    "P.IVA":[piva_cli],
+                    "Totale":[totale],
+                    "Stato":["Bozza"]
                 })
-                st.session_state.fatture_emesse = pd.concat([st.session_state.fatture_emesse, new_row], ignore_index=True)
-                st.balloons()
+                st.session_state.fatture_emesse = pd.concat(
+                    [st.session_state.fatture_emesse, nuova], ignore_index=True
+                )
+                st.success("✅ Fattura salvata")
                 st.session_state.righe_emesse = []
                 st.rerun()
 
-# ========== TAB 2: GESTIONE CLIENTI ==========
+# ========== TAB 2: CLIENTI ==========
 with tab2:
-    st.header("👥 **Gestione Anagrafica Clienti**")
-
-    # Aggiungi nuovo cliente
+    st.header("👥 Clienti")
     with st.form("nuovo_cliente"):
-        st.subheader("➕ Nuovo Cliente")
         col1, col2 = st.columns(2)
-        with col1: nuovo_nome = st.text_input("Denominazione")
-        with col2: nuova_piva = st.text_input("P.IVA/CF")
-        nuovo_indirizzo = st.text_area("Indirizzo", height=80)
-        if st.form_submit_button("💾 Salva Cliente"):
-            new_cliente = pd.DataFrame({
-                "Denominazione":[nuovo_nome], "P.IVA":[nuova_piva], "Indirizzo":[nuovo_indirizzo]
+        with col1:
+            n_den = st.text_input("Denominazione")
+        with col2:
+            n_piva = st.text_input("P.IVA/CF")
+        n_ind = st.text_area("Indirizzo", height=70)
+        if st.form_submit_button("💾 Salva cliente"):
+            nuovo = pd.DataFrame({
+                "Denominazione":[n_den],"P.IVA":[n_piva],"Indirizzo":[n_ind]
             })
-            st.session_state.clienti = pd.concat([st.session_state.clienti, new_cliente], ignore_index=True)
-            st.success("✅ Cliente salvato!")
+            st.session_state.clienti = pd.concat(
+                [st.session_state.clienti, nuovo], ignore_index=True
+            )
+            st.success("Cliente salvato")
             st.rerun()
 
-    st.markdown("---")
     if not st.session_state.clienti.empty:
-        st.subheader("📋 Elenco Clienti")
-        st.dataframe(st.session_state.clienti)
-        csv_c = st.session_state.clienti.to_csv(index=False)
-        st.download_button("📥 Esporta Clienti CSV", csv_c, "clienti.csv", "text/csv")
+        st.dataframe(st.session_state.clienti, use_container_width=True)
 
-# ========== TAB 3-6: RICEVUTE, ELENCHI, DASHBOARD (invariati) ==========
+# ========== TAB 3: FATTURE RICEVUTE (SEMPLIFICATA) ==========
 with tab3:
-    st.header("📥 **Fatture Ricevute**")
-    st.info("Funzionalità fattrure ricevute già implementata")
+    st.header("📥 Registra fattura ricevuta")
+    col1, col2 = st.columns(2)
+    with col1:
+        num_r = st.text_input("Numero documento")
+        data_r = st.date_input("Data", date.today(), key="data_r")
+    with col2:
+        forn = st.text_input("Fornitore")
+        piva_f = st.text_input("P.IVA fornitore")
+    imp_tot = st.number_input("Totale fattura €", min_value=0.0, value=0.0)
+    if st.button("💾 Salva fattura ricevuta", type="primary"):
+        nuova_r = pd.DataFrame({
+            "Numero":[num_r],"Data":[str(data_r)],"Fornitore":[forn],
+            "P.IVA":[piva_f],"Totale":[imp_tot],"Stato":["Registrata"]
+        })
+        st.session_state.fatture_ricevute = pd.concat(
+            [st.session_state.fatture_ricevute, nuova_r], ignore_index=True
+        )
+        st.success("Fattura ricevuta salvata")
+        st.rerun()
 
+# ========== TAB 4: ELENCO EMESSE ==========
 with tab4:
-    st.header("📋 **Fatture Emesse**")
+    st.header("📋 Fatture emesse")
     if not st.session_state.fatture_emesse.empty:
-        st.dataframe(st.session_state.fatture_emesse)
+        st.dataframe(st.session_state.fatture_emesse, use_container_width=True)
         csv_e = st.session_state.fatture_emesse.to_csv(index=False)
-        st.download_button("📥 CSV Emesse", csv_e, "fatture_emesse.csv")
+        st.download_button("📥 Esporta emesse CSV", csv_e, "fatture_emesse.csv", "text/csv")
+    else:
+        st.info("Nessuna fattura emessa salvata")
 
+# ========== TAB 5: ELENCO RICEVUTE ==========
 with tab5:
-    st.header("📋 **Fatture Ricevute**")
-    st.info("Registra nella TAB Ricevute")
+    st.header("📋 Fatture ricevute")
+    if not st.session_state.fatture_ricevute.empty:
+        st.dataframe(st.session_state.fatture_ricevute, use_container_width=True)
+        csv_r = st.session_state.fatture_ricevute.to_csv(index=False)
+        st.download_button("📥 Esporta ricevute CSV", csv_r, "fatture_ricevute.csv", "text/csv")
+    else:
+        st.info("Nessuna fattura ricevuta registrata")
 
+# ========== TAB 6: DASHBOARD ==========
 with tab6:
-    st.header("📊 **Dashboard**")
+    st.header("📊 Dashboard")
     col1,col2,col3,col4 = st.columns(4)
-    with col1: st.metric("Clienti", len(st.session_state.clienti))
-    with col2: st.metric("Fatture Emesse", len(st.session_state.fatture_emesse))
-    with col3: st.metric("Fatturato", f"€{st.session_state.fatture_emesse['Totale'].sum():.0f}")
-    with col4: st.metric("Media Fattura", f"€{st.session_state.fatture_emesse['Totale'].mean():.0f}")
 
-# ========== FUNZIONE PDF ==========
-def genera_pdf(numero, data, cliente, righe, totali, piva_azienda, ragione_sociale):
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=60, bottomMargin=30)
-    story = []
+    # Fatture emesse
+    num_emesse = len(st.session_state.fatture_emesse)
+    tot_emesse = st.session_state.fatture_emesse["Totale"].sum() if "Totale" in st.session_state.fatture_emesse.columns else 0
+    media_emesse = st.session_state.fatture_emesse["Totale"].mean() if "Totale" in st.session_state.fatture_emesse.columns and num_emesse>0 else 0
 
-    # Stili
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('CustomTitle', parent=styles['Title'], fontSize=18, spaceAfter=30, alignment=1)
+    # Fatture ricevute
+    num_ricevute = len(st.session_state.fatture_ricevute)
+    tot_ricevute = st.session_state.fatture_ricevute["Totale"].sum() if "Totale" in st.session_state.fatture_ricevute.columns else 0
 
-    # Header
-    story.append(Paragraph(f"<b>FATTURA N. {numero}</b>", title_style))
-    story.append(Spacer(1, 12))
-    story.append(Paragraph(f"<b>Data: {data.strftime('%d/%m/%Y')}</b>", styles['Normal']))
-
-    # Azienda
-    story.append(Spacer(1, 20))
-    story.append(Paragraph("<b>CEDENTE PRESTATORE</b>", styles['Heading2']))
-    story.append(Paragraph(f"{ragione_sociale}<br/>P.IVA: {piva_azienda}", styles['Normal']))
-
-    # Cliente
-    story.append(Paragraph("<b>CESSIONARIO COMMITTENTE</b>", styles['Heading2']))
-    story.append(Paragraph(f"{cliente['denominazione']}<br/>P.IVA: {cliente['piva']}", styles['Normal']))
-
-    # Tabella Righe
-    story.append(Spacer(1, 20))
-    data_table = [["Descrizione", "Q.tà", "Prezzo", "IVA%", "Totale"]]
-    for r in righe:
-        data_table.append([r["desc"], f"{r['qta']}", f"€{r['prezzo']:.2f}", f"{r['iva']}%", f"€{r['qta']*r['prezzo']*(1+r['iva']/100):.2f}"])
-
-    table = Table(data_table)
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.grey),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
-        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,0), 12),
-        ('BOTTOMPADDING', (0,0), (-1,0), 12),
-        ('BACKGROUND', (0,1), (-1,-1), colors.beige),
-        ('GRID', (0,0), (-1,-1), 1, colors.black)
-    ]))
-    story.append(table)
-
-    # Totali
-    story.append(Spacer(1, 20))
-    story.append(Paragraph(f"<b>IMPONIBILE: €{totali['imponibile']:.2f}</b>", styles['Normal']))
-    story.append(Paragraph(f"<b>IVA: €{totali['iva']:.2f}</b>", styles['Normal']))
-    story.append(Paragraph(f"<b>TOTALE: €{totali['totale']:.2f}</b>", styles['Title']))
-
-    doc.build(story)
-    buffer.seek(0)
-    return buffer.getvalue()
+    with col1:
+        st.metric("Fatture emesse", num_emesse)
+    with col2:
+        st.metric("Fatturato emesso", f"€{tot_emesse:.0f}")
+    with col3:
+        st.metric("Fatture ricevute", num_ricevute)
+    with col4:
+        st.metric("Acquisti", f"€{tot_ricevute:.0f}")
 
 st.markdown("---")
-st.markdown("*Fisco Chiaro Consulting 2025 - VERSIONE PRO*")
+st.caption("Fisco Chiaro Consulting - versione stabile senza errori di colonna Totale")
