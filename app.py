@@ -2,26 +2,41 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 import requests
+import os
+import io
+
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 
 # ==========================
 # CONFIGURAZIONE PAGINA
 # ==========================
 st.set_page_config(
-    page_title="Fisco Chiaro Consulting - Fatturazione elettronica",
+    page_title="Fisco Chiaro - Fatturazione elettronica",
     layout="wide",
     page_icon="📄"
 )
 
+# Cartella locale per i PDF
+PDF_DIR = "fatture_pdf"
+os.makedirs(PDF_DIR, exist_ok=True)
+
 # ==========================
 # STATO DI SESSIONE
 # ==========================
-COLONNE_DOC = ["Tipo", "Numero", "Data", "Controparte", "Importo", "Stato", "UUID"]
+COLONNE_DOC = ["Tipo", "Numero", "Data", "Controparte", "Importo", "Stato", "UUID", "PDF"]
 
 if "documenti_emessi" not in st.session_state:
     st.session_state.documenti_emessi = pd.DataFrame(columns=COLONNE_DOC)
 
 if "ultimo_uuid" not in st.session_state:
     st.session_state.ultimo_uuid = ""
+
+if "ultimo_pdf_bytes" not in st.session_state:
+    st.session_state.ultimo_pdf_bytes = None
+if "ultimo_pdf_nome" not in st.session_state:
+    st.session_state.ultimo_pdf_nome = ""
+
 
 # ==========================
 # SIDEBAR STILE GESTIONALE
@@ -63,7 +78,7 @@ with st.sidebar:
 col_logo, col_menu, col_user = st.columns([1, 5, 1])
 
 with col_logo:
-    st.markdown("## FISCO CHIARO CONSULTING")
+    st.markdown("## FISCO CHIARO")
 
 with col_menu:
     st.markdown("#### Documenti | Clienti | SDI")
@@ -75,10 +90,11 @@ st.markdown("---")
 
 
 # ==========================
-# FUNZIONI DI SUPPORTO OPENAPI
+# FUNZIONI DI SUPPORTO
 # ==========================
 
-def _check_api():
+def _check_api() -> bool:
+    """Controlla che API key e BASE_URL siano configurati in modo sensato."""
     if not api_key:
         st.error("Inserisci l'API Key Openapi nella sidebar per usare le funzioni SDI.")
         return False
@@ -88,17 +104,57 @@ def _check_api():
     return True
 
 
+def genera_pdf_fattura(numero: str, data_f: date, controparte: str, importo: float) -> bytes:
+    """
+    Genera un PDF semplice della fattura (fattura pro-forma lato app)
+    e restituisce i bytes del file.
+    """
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    larghezza, altezza = A4
+
+    # Intestazione semplice stile FCC
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(40, altezza - 60, "FISCO CHIARO CONSULTING")
+
+    c.setFont("Helvetica", 10)
+    c.drawString(40, altezza - 80, "Fattura emessa (app)")
+    c.drawString(40, altezza - 95, f"Numero: {numero}")
+    c.drawString(40, altezza - 110, f"Data: {data_f.strftime('%d/%m/%Y')}")
+
+    # Dati cliente
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(40, altezza - 140, "Cliente / Controparte:")
+    c.setFont("Helvetica", 10)
+    c.drawString(40, altezza - 155, controparte if controparte else "-")
+
+    # Riepilogo economico
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(40, altezza - 190, "Riepilogo:")
+    c.setFont("Helvetica", 10)
+    c.drawString(60, altezza - 210, f"Importo totale: € {importo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
+    # Nota finale
+    c.setFont("Helvetica-Oblique", 8)
+    c.drawString(40, 60, "Documento generato dall'app Fisco Chiaro (uso interno / invio cliente).")
+
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer.read()
+
+
 @st.cache_data(ttl=60)
 def get_fatture_ricevute(api_key: str, base_url: str) -> pd.DataFrame:
     """
-    Lettura fatture passive (ricevute da SdI).
-    La struttura esatta della risposta può variare: adatta i campi ai tuoi dati reali.
+    Lettura fatture passive (ricevute da SdI) via Openapi.
+    Adatta la struttura ai campi restituiti dalla tua istanza reale.
     """
     if not api_key:
         return pd.DataFrame(columns=COLONNE_DOC)
 
     headers = {"Authorization": f"Bearer {api_key}"}
-    # Nota: il parametro "type=1" è un esempio. Verifica nella documentazione Openapi
+    # Parametri di esempio: verifica con la documentazione Openapi
     params = {"type": 1}
 
     try:
@@ -119,7 +175,8 @@ def get_fatture_ricevute(api_key: str, base_url: str) -> pd.DataFrame:
                 "Controparte": inv.get("counterparty", {}).get("name"),
                 "Importo": inv.get("totals", {}).get("grandTotal"),
                 "Stato": inv.get("status"),
-                "UUID": inv.get("uuid") or inv.get("id")
+                "UUID": inv.get("uuid") or inv.get("id"),
+                "PDF": ""   # per le ricevute non generiamo PDF locale
             })
         df = pd.DataFrame(righe, columns=COLONNE_DOC)
         return df
@@ -132,15 +189,12 @@ def get_fatture_ricevute(api_key: str, base_url: str) -> pd.DataFrame:
 def invia_xml_sdi(xml_bytes: bytes, apply_signature: bool, apply_legal: bool) -> dict:
     """
     Invia un file XML allo SDI tramite Openapi usando POST /invoices.
-    Vedi documentazione Fatturazione Elettronica SDI. 
     """
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/xml"
     }
 
-    # alcune configurazioni (firma / conservazione) in Openapi si gestiscono lato
-    # business configuration; qui uso querystring come esempio generico.
     params = {
         "apply_signature": str(apply_signature).lower(),
         "apply_legal_storage": str(apply_legal).lower(),
@@ -164,7 +218,7 @@ def invia_xml_sdi(xml_bytes: bytes, apply_signature: bool, apply_legal: bool) ->
 
 def get_stato_fattura(uuid: str) -> dict:
     """
-    Recupera lo stato di una singola fattura tramite GET /invoices/{uuid}. 
+    Recupera lo stato di una singola fattura tramite GET /invoices/{uuid}.
     """
     headers = {"Authorization": f"Bearer {api_key}"}
     url = f"{BASE_URL}/invoices/{uuid}"
@@ -238,12 +292,38 @@ if pagina == "Lista documenti":
             if stato_filtro != "TUTTI":
                 df = df[df["Stato"] == stato_filtro]
 
-            st.dataframe(df, use_container_width=True, height=450)
+            st.dataframe(df.drop(columns=["PDF"]), use_container_width=True, height=450)
         else:
             st.info("Nessun documento da mostrare per i filtri selezionati.")
 
+    st.markdown("### 📄 Download PDF fatture emesse")
+    df_e = st.session_state.documenti_emessi
+    if df_e.empty:
+        st.caption("Nessuna fattura emessa salvata nell'app.")
+    else:
+        df_e_pdf = df_e[df_e["PDF"] != ""]
+        if df_e_pdf.empty:
+            st.caption("Le fatture emesse non hanno ancora PDF associati.")
+        else:
+            numeri = df_e_pdf["Numero"].tolist()
+            scelta_num = st.selectbox("Seleziona fattura emessa", numeri)
+            if scelta_num:
+                riga = df_e_pdf[df_e_pdf["Numero"] == scelta_num].iloc[0]
+                pdf_path = riga["PDF"]
+                if os.path.exists(pdf_path):
+                    with open(pdf_path, "rb") as f:
+                        pdf_bytes = f.read()
+                    st.download_button(
+                        label=f"📥 Scarica PDF fattura {scelta_num}",
+                        data=pdf_bytes,
+                        file_name=os.path.basename(pdf_path),
+                        mime="application/pdf"
+                    )
+                else:
+                    st.warning("Il file PDF indicato non esiste più sul disco.")
 
-# 2) CREA FATTURA (SOLO EMESSA, LOCALE)
+
+# 2) CREA FATTURA (SOLO EMESSA, LOCALE + PDF)
 elif pagina == "Crea fattura":
     st.subheader("Crea nuova fattura emessa (solo lato app)")
 
@@ -260,6 +340,13 @@ elif pagina == "Crea fattura":
     stato = st.selectbox("Stato", ["Bozza", "Inviata", "Registrata"])
 
     if st.button("💾 Salva fattura emessa", type="primary"):
+        # Genera PDF
+        pdf_bytes = genera_pdf_fattura(numero, data_f, controparte, importo)
+        pdf_filename = f"{numero.replace('/', '_')}.pdf"
+        pdf_path = os.path.join(PDF_DIR, pdf_filename)
+        with open(pdf_path, "wb") as f:
+            f.write(pdf_bytes)
+
         nuova = pd.DataFrame([{
             "Tipo": "Emessa",
             "Numero": numero,
@@ -267,14 +354,27 @@ elif pagina == "Crea fattura":
             "Controparte": controparte,
             "Importo": importo,
             "Stato": stato,
-            "UUID": ""
+            "UUID": "",
+            "PDF": pdf_path
         }], columns=COLONNE_DOC)
 
         st.session_state.documenti_emessi = pd.concat(
             [st.session_state.documenti_emessi, nuova],
             ignore_index=True
         )
+
+        st.session_state.ultimo_pdf_bytes = pdf_bytes
+        st.session_state.ultimo_pdf_nome = pdf_filename
+
         st.success("✅ Fattura emessa salvata (solo lato app, non inviata a SdI).")
+        st.markdown("#### 📄 PDF generato")
+
+        st.download_button(
+            label="📥 Scarica subito il PDF",
+            data=pdf_bytes,
+            file_name=pdf_filename,
+            mime="application/pdf"
+        )
 
 
 # 3) INVIA XML A SDI VIA OPENAPI
@@ -376,4 +476,3 @@ else:
 
     st.markdown("---")
     st.caption("Fisco Chiaro – Emesse gestite dall'app; ricezione, invio e stato via Openapi SDI.")
-
