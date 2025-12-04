@@ -7,7 +7,7 @@ import requests
 # CONFIGURAZIONE PAGINA
 # ==========================
 st.set_page_config(
-    page_title="Fisco Chiaro - Fatturazione elettronica",
+    page_title="Fisco Chiaro Consulting - Fatturazione elettronica",
     layout="wide",
     page_icon="📄"
 )
