@@ -106,14 +106,14 @@ def _check_api() -> bool:
 
 def genera_pdf_fattura(numero: str, data_f: date, controparte: str, importo: float) -> bytes:
     """
-    Genera un PDF semplice della fattura (fattura pro-forma lato app)
-    e restituisce i bytes del file.
+    Genera un PDF semplice della fattura (pro-forma) e restituisce i bytes del file.
+    Usa reportlab.
     """
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     larghezza, altezza = A4
 
-    # Intestazione semplice stile FCC
+    # Intestazione stile FCC
     c.setFont("Helvetica-Bold", 16)
     c.drawString(40, altezza - 60, "FISCO CHIARO CONSULTING")
 
@@ -132,7 +132,11 @@ def genera_pdf_fattura(numero: str, data_f: date, controparte: str, importo: flo
     c.setFont("Helvetica-Bold", 11)
     c.drawString(40, altezza - 190, "Riepilogo:")
     c.setFont("Helvetica", 10)
-    c.drawString(60, altezza - 210, f"Importo totale: € {importo:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    c.drawString(
+        60,
+        altezza - 210,
+        f"Importo totale: € {importo:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    )
 
     # Nota finale
     c.setFont("Helvetica-Oblique", 8)
