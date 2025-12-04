@@ -63,7 +63,7 @@ with st.sidebar:
 col_logo, col_menu, col_user = st.columns([1, 5, 1])
 
 with col_logo:
-    st.markdown("## FISCO CHIARO")
+    st.markdown("## FISCO CHIARO CONSULTING")
 
 with col_menu:
     st.markdown("#### Documenti | Clienti | SDI")
