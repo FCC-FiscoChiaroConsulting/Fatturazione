@@ -3,10 +3,8 @@ import pandas as pd
 from datetime import date
 import requests
 import os
-import io
 
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
+from fpdf import FPDF   # libreria leggera per creare PDF (pacchetto: fpdf2)
 
 # ==========================
 # CONFIGURAZIONE PAGINA
@@ -106,46 +104,42 @@ def _check_api() -> bool:
 
 def genera_pdf_fattura(numero: str, data_f: date, controparte: str, importo: float) -> bytes:
     """
-    Genera un PDF semplice della fattura (pro-forma) e restituisce i bytes del file.
-    Usa reportlab.
+    Genera il PDF della fattura usando fpdf2 (compatibile con Render).
+    Restituisce i bytes del file PDF.
     """
-    buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
-    larghezza, altezza = A4
+    pdf = FPDF()
+    pdf.add_page()
 
-    # Intestazione stile FCC
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(40, altezza - 60, "FISCO CHIARO CONSULTING")
+    # Intestazione FCC
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, "FISCO CHIARO CONSULTING", ln=1)
 
-    c.setFont("Helvetica", 10)
-    c.drawString(40, altezza - 80, "Fattura emessa (app)")
-    c.drawString(40, altezza - 95, f"Numero: {numero}")
-    c.drawString(40, altezza - 110, f"Data: {data_f.strftime('%d/%m/%Y')}")
+    pdf.set_font("Helvetica", "", 11)
+    pdf.cell(0, 8, "Fattura emessa (app)", ln=1)
+    pdf.cell(0, 8, f"Numero: {numero}", ln=1)
+    pdf.cell(0, 8, f"Data: {data_f.strftime('%d/%m/%Y')}", ln=1)
+    pdf.ln(4)
 
     # Dati cliente
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(40, altezza - 140, "Cliente / Controparte:")
-    c.setFont("Helvetica", 10)
-    c.drawString(40, altezza - 155, controparte if controparte else "-")
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 8, "Cliente / Controparte:", ln=1)
+    pdf.set_font("Helvetica", "", 11)
+    pdf.multi_cell(0, 8, controparte or "-")
+    pdf.ln(4)
 
     # Riepilogo economico
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(40, altezza - 190, "Riepilogo:")
-    c.setFont("Helvetica", 10)
-    c.drawString(
-        60,
-        altezza - 210,
-        f"Importo totale: € {importo:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    )
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 8, "Riepilogo:", ln=1)
+    pdf.set_font("Helvetica", "", 11)
+    testo_importo = f"Importo totale: € {importo:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    pdf.cell(0, 8, testo_importo, ln=1)
 
-    # Nota finale
-    c.setFont("Helvetica-Oblique", 8)
-    c.drawString(40, 60, "Documento generato dall'app Fisco Chiaro (uso interno / invio cliente).")
+    pdf.ln(10)
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.multi_cell(0, 5, "Documento generato dall'app Fisco Chiaro (uso interno / invio cliente).")
 
-    c.showPage()
-    c.save()
-    buffer.seek(0)
-    return buffer.read()
+    # Restituisce il PDF come bytes
+    return pdf.output(dest="S").encode("latin-1")
 
 
 @st.cache_data(ttl=60)
@@ -480,3 +474,4 @@ else:
 
     st.markdown("---")
     st.caption("Fisco Chiaro – Emesse gestite dall'app; ricezione, invio e stato via Openapi SDI.")
+
