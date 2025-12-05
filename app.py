@@ -37,14 +37,14 @@ if "documenti_emessi" not in st.session_state:
 
 if "clienti" not in st.session_state:
     st.session_state.clienti = pd.DataFrame(
-        columns=["Denominazione", "PIVA", "Indirizzo", "Tipo"]  # Tipo: Cliente/Fornitore
+        columns=["Denominazione", "PIVA", "Indirizzo", "Tipo"]  # Cliente/Fornitore
     )
 
 if "righe_correnti" not in st.session_state:
     st.session_state.righe_correnti = []
 
 # ==========================
-# FUNZIONE PDF (CORRETTA)
+# FUNZIONE PDF (ROBUSTA)
 # ==========================
 
 
@@ -57,10 +57,11 @@ def genera_pdf_fattura(
     iva: float,
     totale: float,
 ) -> bytes:
-    """Genera PDF semplice della fattura (senza simbolo €)."""
+    """Genera PDF semplice della fattura (senza simbolo €, gestione sicura delle righe)."""
     pdf = FPDF()
     pdf.add_page()
 
+    # Intestazione
     pdf.set_text_color(31, 119, 180)
     pdf.set_font("Helvetica", "B", 16)
     pdf.cell(0, 10, "FISCO CHIARO CONSULTING", ln=1)
@@ -72,6 +73,7 @@ def genera_pdf_fattura(
     pdf.cell(0, 8, f"Data: {data_f.strftime('%d/%m/%Y')}", ln=1)
     pdf.ln(4)
 
+    # Cliente
     pdf.set_font("Helvetica", "B", 11)
     pdf.cell(0, 8, "Cliente:", ln=1)
     pdf.set_font("Helvetica", "", 11)
@@ -81,21 +83,30 @@ def genera_pdf_fattura(
         pdf.multi_cell(0, 6, cliente["Indirizzo"])
     pdf.ln(4)
 
+    # Righe
     pdf.set_font("Helvetica", "B", 11)
     pdf.cell(0, 8, "Righe fattura:", ln=1)
     pdf.set_font("Helvetica", "", 10)
 
     for r in righe:
-        desc = (r.get("desc") or "").replace("\n", " ")
-        if len(desc) > 120:
-            desc = desc[:117] + "..."
-        riga_txt = (
-            f"- {desc} | {r.get('qta', 0)} x "
-            f"{r.get('prezzo', 0):.2f} (IVA {r.get('iva', 0)}%)"
-        )
+        desc = (r.get("desc") or "").replace("\n", " ").strip()
+        # se stringa senza spazi (es. codice lungo), inserisco spazi artificiali
+        if " " not in desc and len(desc) > 20:
+            desc = " ".join(desc[i : i + 20] for i in range(0, len(desc), 20))
+        # taglio ulteriore per sicurezza
+        if len(desc) > 150:
+            desc = desc[:147] + "..."
+
+        qta = r.get("qta", 0)
+        prezzo = r.get("prezzo", 0.0)
+        iva_perc = r.get("iva", 0)
+
+        riga_txt = f"- {desc} | {qta} x {prezzo:.2f} (IVA {iva_perc}%)"
         pdf.multi_cell(0, 6, riga_txt)
 
     pdf.ln(4)
+
+    # Riepilogo
     pdf.set_font("Helvetica", "B", 11)
     pdf.cell(0, 8, "Riepilogo:", ln=1)
     pdf.set_font("Helvetica", "", 11)
@@ -110,9 +121,7 @@ def genera_pdf_fattura(
     pdf.cell(
         0,
         6,
-        f"IVA: EUR {iva:,.2f}".replace(",", "X")
-        .replace(".", ",")
-        .replace("X", "."),
+        f"IVA: EUR {iva:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
         ln=1,
     )
     pdf.cell(
@@ -128,7 +137,7 @@ def genera_pdf_fattura(
     pdf.set_font("Helvetica", "I", 8)
     pdf.multi_cell(0, 4, "Documento generato dall'app Fisco Chiaro Consulting.")
 
-    data = pdf.output(dest="S")  # bytearray/bytes
+    data = pdf.output(dest="S")  # bytes/bytearray
     return bytes(data)
 
 # ==========================
@@ -406,7 +415,7 @@ elif pagina == "Crea nuova fattura":
                 iva_tot,
                 totale,
             )
-            pdf_filename = f"{numero.replace('/', '_')}.pdf"
+            pdf_filename = f"{numero.replace("/", "_")}.pdf"
             pdf_path = os.path.join(PDF_DIR, pdf_filename)
             with open(pdf_path, "wb") as f:
                 f.write(pdf_bytes)
@@ -441,7 +450,7 @@ elif pagina == "Crea nuova fattura":
             )
 
 # ==========================
-# PAGINE EXTRA (download / pacchetto AdE / rubrica / dashboard)
+# ALTRE PAGINE
 # ==========================
 elif pagina == "Download (documenti inviati)":
     st.subheader("Download documenti inviati")
@@ -523,5 +532,6 @@ st.markdown("---")
 st.caption(
     "Fisco Chiaro Consulting – Emesse gestite dall'app, PDF generati automaticamente."
 )
+
 
   
