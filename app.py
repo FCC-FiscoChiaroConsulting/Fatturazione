@@ -60,20 +60,20 @@ if "clienti" not in st.session_state:
             "CAP",
             "Comune",
             "Provincia",
-            "Tipo",  # Cliente/Fornitore
+            "Tipo",
         ]
     )
 
 if "righe_correnti" not in st.session_state:
     st.session_state.righe_correnti = []
 
-# selezione cliente controllata
-if "cliente_sel" not in st.session_state:
-    st.session_state.cliente_sel = "NUOVO"
+# etichetta cliente selezionato (NON è la key del widget)
+if "cliente_corrente_label" not in st.session_state:
+    st.session_state.cliente_corrente_label = "NUOVO"
 
-# stato di navigazione (pagina corrente)
-if "nav_pagina" not in st.session_state:
-    st.session_state.nav_pagina = "Dashboard"
+# pagina corrente (NON è la key del radio)
+if "pagina_corrente" not in st.session_state:
+    st.session_state.pagina_corrente = "Dashboard"
 
 
 # ==========================
@@ -104,10 +104,7 @@ def mostra_anteprima_pdf(pdf_bytes: bytes, altezza: int = 600):
 
 
 def get_next_invoice_number() -> str:
-    """
-    Genera un numero fattura suggerito del tipo:
-    FT2025001, FT2025002, ... in base alle fatture già emesse nell'anno corrente.
-    """
+    """FT2025001, FT2025002, ... in base alle fatture dell'anno corrente."""
     year = date.today().year
     prefix = f"FT{year}"
     df = st.session_state.documenti_emessi
@@ -143,14 +140,11 @@ def genera_pdf_fattura(
     modalita_pagamento: str = "",
     note: str = "",
 ) -> bytes:
-    """
-    Genera PDF della fattura con layout tipo copia di cortesia SdI.
-    ATTENZIONE: niente simbolo "€" (fpdf base non lo supporta).
-    """
+    """PDF stile copia di cortesia SdI (senza carattere €)."""
     pdf = FPDF()
     pdf.add_page()
 
-    # ---------- HEADER: EMITTENTE ----------
+    # HEADER EMITTENTE
     pdf.set_font("Helvetica", "B", 13)
     pdf.set_xy(10, 10)
     pdf.cell(0, 6, EMITTENTE.get("Denominazione", ""), ln=1)
@@ -182,7 +176,7 @@ def genera_pdf_fattura(
         pdf.set_x(10)
         pdf.cell(0, 4, f"PARTITA IVA {EMITTENTE['PIVA']}", ln=1)
 
-    # ---------- CLIENTE (a destra) ----------
+    # CLIENTE (DESTRA)
     den_cli = cliente.get("Denominazione", "-")
     ind_cli = cliente.get("Indirizzo", "")
     cap_cli = cliente.get("CAP", "")
@@ -226,7 +220,7 @@ def genera_pdf_fattura(
 
     pdf.ln(5)
 
-    # ---------- DATI DOCUMENTO / TRASMISSIONE ----------
+    # DATI DOCUMENTO / TRASMISSIONE
     pdf.set_fill_color(31, 119, 180)
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Helvetica", "B", 10)
@@ -238,7 +232,6 @@ def genera_pdf_fattura(
     pdf.set_text_color(0, 0, 0)
     pdf.set_font("Helvetica", "", 9)
 
-    # colonna sinistra
     pdf.set_x(10)
     pdf.cell(25, 6, "TIPO", border=1)
     pdf.cell(70, 6, "TD01 FATTURA - B2B", border=1, ln=1)
@@ -263,7 +256,6 @@ def genera_pdf_fattura(
     pdf.cell(25, 6, "CAUSALE", border=1)
     pdf.cell(70, 6, causale, border=1, ln=1)
 
-    # colonna destra (placeholder trasmissione)
     pdf.set_xy(105, pdf.get_y() - 24)
     pdf.cell(35, 6, "CODICE DESTINATARIO", border=1)
     pdf.cell(60, 6, "0000000", border=1, ln=1)
@@ -282,7 +274,7 @@ def genera_pdf_fattura(
 
     pdf.ln(4)
 
-    # ---------- DETTAGLIO DOCUMENTO ----------
+    # DETTAGLIO DOCUMENTO
     pdf.set_fill_color(31, 119, 180)
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Helvetica", "B", 10)
@@ -301,8 +293,7 @@ def genera_pdf_fattura(
     pdf.cell(20, 6, "IVA %", border=1, ln=1)
 
     pdf.set_font("Helvetica", "", 9)
-
-    riepilogo_iva = {}  # {aliquota: {"imp":..., "iva":...}}
+    riepilogo_iva = {}
 
     for idx, r in enumerate(righe, start=1):
         desc = (r.get("desc") or "").replace("\n", " ").strip()
@@ -324,7 +315,7 @@ def genera_pdf_fattura(
         pdf.set_x(10)
         pdf.cell(8, 6, str(idx), border=1)
         pdf.cell(80, 6, desc, border=1)
-        pdf.cell(12, 6, "", border=1)  # U.M.
+        pdf.cell(12, 6, "", border=1)
         pdf.cell(25, 6, _format_val_eur(prezzo), border=1, align="R")
         pdf.cell(20, 6, f"{qta:.2f}".replace(".", ","), border=1, align="R")
         pdf.cell(25, 6, _format_val_eur(imp_riga), border=1, align="R")
@@ -332,7 +323,7 @@ def genera_pdf_fattura(
 
     pdf.ln(2)
 
-    # ---------- IMPORTI / NETTO A PAGARE ----------
+    # IMPORTI / NETTO A PAGARE
     pdf.set_font("Helvetica", "", 9)
     x_left = 10
     x_right = 120
@@ -365,7 +356,7 @@ def genera_pdf_fattura(
 
     pdf.ln(4)
 
-    # ---------- RIEPILOGHI IVA ----------
+    # RIEPILOGHI IVA
     pdf.set_fill_color(31, 119, 180)
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Helvetica", "B", 10)
@@ -399,7 +390,7 @@ def genera_pdf_fattura(
 
     pdf.ln(4)
 
-    # ---------- MODALITÀ DI PAGAMENTO ----------
+    # MODALITÀ DI PAGAMENTO
     pdf.set_fill_color(31, 119, 180)
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Helvetica", "B", 10)
@@ -440,7 +431,7 @@ def genera_pdf_fattura(
     pdf.set_x(10)
     pdf.cell(60, 5, f"TOTALE A PAGARE EUR {_format_val_eur(totale)}", ln=1)
 
-    # ---------- NOTE FATTURA ----------
+    # NOTE
     if note and note.strip():
         pdf.ln(3)
         pdf.set_fill_color(31, 119, 180)
@@ -454,7 +445,7 @@ def genera_pdf_fattura(
         pdf.set_x(10)
         pdf.multi_cell(190, 4, note, border=1)
 
-    # ---------- NOTA FINALE ----------
+    # NOTA FINALE
     pdf.set_y(270)
     pdf.set_font("Helvetica", "I", 7)
     pdf.multi_cell(
@@ -469,23 +460,34 @@ def genera_pdf_fattura(
 
 
 # ==========================
-# SIDEBAR
+# SIDEBAR: NAVIGAZIONE
 # ==========================
+PAGINE = [
+    "Lista documenti",
+    "Crea nuova fattura",
+    "Download (documenti inviati)",
+    "Carica pacchetto AdE",
+    "Rubrica",
+    "Dashboard",
+]
+
+# indice di default del radio in base a pagina_corrente
+pagina_default = st.session_state.pagina_corrente
+if pagina_default not in PAGINE:
+    pagina_default = "Dashboard"
+default_index = PAGINE.index(pagina_default)
+
 with st.sidebar:
     st.markdown("### 📄 Documenti")
     pagina = st.radio(
         "",
-        [
-            "Lista documenti",
-            "Crea nuova fattura",
-            "Download (documenti inviati)",
-            "Carica pacchetto AdE",
-            "Rubrica",
-            "Dashboard",
-        ],
-        key="nav_pagina",        # <<--- collegata allo stato di navigazione
+        PAGINE,
+        index=default_index,
         label_visibility="collapsed",
     )
+
+# sincronizzo la pagina corrente con la scelta della sidebar
+st.session_state.pagina_corrente = pagina
 
 # ==========================
 # HEADER SUPERIORE
@@ -504,7 +506,7 @@ with col_user:
 st.markdown("---")
 
 # ==========================
-# BARRA FRONTALE (con bottoni che cambiano pagina)
+# BARRA FRONTALE (bottoni che cambiano pagina)
 # ==========================
 barra_ricerca = ""
 tabs = None
@@ -527,16 +529,16 @@ if pagina in [
         )
     with col_stato:
         if st.button("STATO"):
-            st.session_state.nav_pagina = "Dashboard"
-            st.rerun()
+            st.session_state.pagina_corrente = "Dashboard"
+            st.experimental_rerun()
     with col_emesse:
         if st.button("EMESSE"):
-            st.session_state.nav_pagina = "Lista documenti"
-            st.rerun()
+            st.session_state.pagina_corrente = "Lista documenti"
+            st.experimental_rerun()
     with col_ricevute:
         if st.button("RICEVUTE"):
-            st.session_state.nav_pagina = "Download (documenti inviati)"
-            st.rerun()
+            st.session_state.pagina_corrente = "Download (documenti inviati)"
+            st.experimental_rerun()
     with col_agg:
         st.button("AGGIORNA")
 
@@ -557,7 +559,6 @@ if pagina in [
     ]
     tabs = st.tabs(mesi)
     idx_mese = date.today().month
-
 
 # ==========================
 # PAGINA: LISTA DOCUMENTI
@@ -626,17 +627,25 @@ elif pagina == "Crea nuova fattura":
 
     col1, col2 = st.columns([2, 1])
     with col1:
-        if st.session_state.cliente_sel not in denominazioni:
-            st.session_state.cliente_sel = "NUOVO"
+        # valore di default in base allo stato
+        current_label = st.session_state.cliente_corrente_label
+        if current_label not in denominazioni:
+            current_label = "NUOVO"
+        default_idx = denominazioni.index(current_label)
+
         cliente_sel = st.selectbox(
             "Cliente",
             denominazioni,
-            key="cliente_sel",
+            index=default_idx,
         )
+
+        # sincronizzo stato
+        st.session_state.cliente_corrente_label = cliente_sel
+
     with col2:
         if st.button("➕ Nuovo cliente"):
-            st.session_state.cliente_sel = "NUOVO"
-            st.rerun()
+            st.session_state.cliente_corrente_label = "NUOVO"
+            st.experimental_rerun()
 
     # Dati cliente
     if cliente_sel == "NUOVO":
@@ -713,7 +722,7 @@ elif pagina == "Crea nuova fattura":
         st.session_state.righe_correnti.append(
             {"desc": "", "qta": 1.0, "prezzo": 0.0, "iva": 22}
         )
-        st.rerun()
+        st.experimental_rerun()
 
     imponibile = 0.0
     iva_tot = 0.0
@@ -740,7 +749,7 @@ elif pagina == "Crea nuova fattura":
         with c5:
             if st.button("🗑️", key=f"del_{i}"):
                 st.session_state.righe_correnti.pop(i)
-                st.rerun()
+                st.experimental_rerun()
 
         imp_riga = r["qta"] * r["prezzo"]
         iva_riga = imp_riga * r["iva"] / 100
@@ -762,7 +771,7 @@ elif pagina == "Crea nuova fattura":
         elif not st.session_state.righe_correnti:
             st.error("Inserisci almeno una riga di fattura.")
         else:
-            # Salva cliente in Rubrica se non esiste già
+            # salva cliente se nuovo
             if (
                 cliente_corrente["Denominazione"]
                 and cliente_corrente["Denominazione"]
@@ -788,7 +797,7 @@ elif pagina == "Crea nuova fattura":
                 )
                 st.info("Cliente salvato in Rubrica.")
 
-            # Genera PDF
+            # genera PDF
             pdf_bytes = genera_pdf_fattura(
                 numero,
                 data_f,
@@ -805,7 +814,6 @@ elif pagina == "Crea nuova fattura":
             with open(pdf_path, "wb") as f:
                 f.write(pdf_bytes)
 
-            # Registra fattura emessa
             nuova = pd.DataFrame(
                 [
                     {
