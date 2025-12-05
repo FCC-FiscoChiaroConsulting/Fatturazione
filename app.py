@@ -44,6 +44,7 @@ COLONNE_DOC = [
     "Imponibile",
     "IVA",
     "Importo",
+    "TipoXML",  # codice XML (es. TD01)
     "Stato",
     "UUID",
     "PDF",
@@ -92,6 +93,7 @@ if "pagina_corrente" not in st.session_state:
 # FUNZIONI DI SUPPORTO
 # ==========================
 def _format_val_eur(val: float) -> str:
+    """Formatta un numero in stile EUR italiano (senza simbolo €)."""
     return (
         f"{val:,.2f}"
         .replace(",", "X")
@@ -100,20 +102,22 @@ def _format_val_eur(val: float) -> str:
     )
 
 
-def mostra_anteprima_pdf(pdf_bytes: bytes, altezza: int = 600):
+def mostra_anteprima_pdf(pdf_bytes: bytes, altezza: int = 600) -> None:
+    """Mostra un PDF inline come iframe tramite base64."""
     try:
         b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
         pdf_display = f"""
-<iframe src="data:application/pdf;base64,{b64_pdf}"
-        width="100%" height="{altezza}" type="application/pdf">
-</iframe>
-"""
+        <iframe src="data:application/pdf;base64,{b64_pdf}"
+                width="100%" height="{altezza}" type="application/pdf">
+        </iframe>
+        """
         st.markdown(pdf_display, unsafe_allow_html=True)
-    except Exception as e:
+    except Exception as e:  # pragma: no cover
         st.warning(f"Impossibile mostrare l'anteprima PDF: {e}")
 
 
 def get_next_invoice_number() -> str:
+    """Restituisce il prossimo numero fattura del tipo FT{anno}{progressivo:03d}."""
     year = date.today().year
     prefix = f"FT{year}"
     df = st.session_state.documenti_emessi
@@ -133,7 +137,7 @@ def get_next_invoice_number() -> str:
     return f"{prefix}{seq:03d}"
 
 
-def crea_riepilogo_fatture_emesse(df: pd.DataFrame):
+def crea_riepilogo_fatture_emesse(df: pd.DataFrame) -> None:
     """Riepilogo per periodo: Importo a pagare / Imponibile / IVA."""
     if df.empty:
         st.info("Nessuna fattura emessa per creare il riepilogo.")
@@ -242,6 +246,7 @@ def genera_pdf_fattura(
     modalita_pagamento: str = "",
     note: str = "",
 ) -> bytes:
+    """PDF di cortesia semplice (senza simbolo €)."""
     pdf = FPDF()
     pdf.add_page()
 
@@ -265,7 +270,7 @@ def genera_pdf_fattura(
     pdf.cell(0, 8, "FATTURA", ln=1)
     pdf.set_font("Helvetica", "", 10)
     pdf.cell(0, 5, f"Numero: {numero}", ln=1)
-    pdf.cell(0, 5, f"Data: {data_f.strftime('%d/%m/%Y')}", ln=1)
+    pdf.cell(0, 5, f"Data: {data_f.strftime("%d/%m/%Y")}", ln=1)
     pdf.ln(4)
 
     # Dati cliente
@@ -456,17 +461,22 @@ if pagina == "Lista documenti":
     df_e_all = st.session_state.documenti_emessi.copy()
 
     if tabs is not None:
-        # Tab Riepilogo
+        # Tab Riepilogo (indice 0)
         with tabs[0]:
             crea_riepilogo_fatture_emesse(df_e_all)
 
-        # Tab mese corrente
+        # Tab mese corrente (indice = mese)
         with tabs[idx_mese]:
             df_e = df_e_all.copy()
-            if not df_e.empty:
+
+            if df_e.empty:
+                st.info("Nessun documento emesso presente.")
+            else:
+                # parsing date + filtro mese
                 df_e["Data"] = pd.to_datetime(df_e["Data"], errors="coerce")
                 df_e = df_e[df_e["Data"].dt.month == idx_mese]
 
+                # filtro ricerca
                 if barra_ricerca:
                     mask = (
                         df_e["Numero"]
@@ -478,16 +488,151 @@ if pagina == "Lista documenti":
                     )
                     df_e = df_e[mask]
 
-                if not df_e.empty:
-                    st.dataframe(
-                        df_e.drop(columns=["PDF"]),
-                        use_container_width=True,
-                        height=400,
-                    )
-                else:
+                if df_e.empty:
                     st.info("Nessun documento emesso per il mese selezionato.")
-            else:
-                st.info("Nessun documento emesso presente.")
+                else:
+                    st.caption("Elenco fatture emesse (vista tipo Effatta)")
+                    # ordino per data decrescente
+                    df_e = df_e.sort_values("Data", ascending=False)
+
+                    for _, row in df_e.iterrows():
+                        row_index = row.name
+                        data_doc = pd.to_datetime(row["Data"])
+                        tipo_xml = row.get("TipoXML", "") or "TD01"
+                        tipo_label = f"{tipo_xml} - FATTURA"
+
+                        importo = float(row.get("Importo", 0.0) or 0.0)
+                        controparte = row.get("Controparte", "")
+                        stato_corrente = row.get("Stato", "Creazione") or "Creazione"
+                        pdf_path = row.get("PDF", "")
+
+                        with st.container():
+                            st.markdown("---")
+                            col_icon, col_info, col_imp, col_stato, col_menu = st.columns(
+                                [0.6, 4, 1.4, 1.4, 1.8]
+                            )
+
+                            # ICONA PDF
+                            with col_icon:
+                                st.markdown("📄")
+
+                            # INFO DOCUMENTO
+                            with col_info:
+                                st.markdown(
+                                    f"**{tipo_label}**  \n"
+                                    f"{row['Numero']} del {data_doc.strftime('%d/%m/%Y')}  \n"
+                                    f"**INVIATO A**  \n"
+                                    f"{controparte}"
+                                )
+
+                            # IMPORTO
+                            with col_imp:
+                                st.markdown("**IMPORTO (EUR)**")
+                                st.markdown(_format_val_eur(importo))
+
+                            # STATO
+                            with col_stato:
+                                st.markdown("**Stato**")
+                                possibili_stati = ["Creazione", "Creato", "Inviato"]
+                                if stato_corrente not in possibili_stati:
+                                    stato_corrente = "Creazione"
+                                new_stato = st.selectbox(
+                                    "",
+                                    possibili_stati,
+                                    index=possibili_stati.index(stato_corrente),
+                                    key=f"stato_{row_index}",
+                                    label_visibility="collapsed",
+                                )
+                                st.session_state.documenti_emessi.loc[
+                                    row_index, "Stato"
+                                ] = new_stato
+
+                            # MENU AZIONI
+                            with col_menu:
+                                st.markdown("**Azioni**")
+                                azione = st.selectbox(
+                                    "",
+                                    [
+                                        "-",
+                                        "Visualizza",
+                                        "Scarica pacchetto",
+                                        "Scarica PDF fattura",
+                                        "Scarica PDF proforma",
+                                        "Modifica (placeholder)",
+                                        "Duplica",
+                                        "Elimina",
+                                        "Invia (placeholder)",
+                                    ],
+                                    key=f"azione_{row_index}",
+                                    label_visibility="collapsed",
+                                )
+
+                                if azione == "Visualizza":
+                                    if pdf_path and os.path.exists(pdf_path):
+                                        with open(pdf_path, "rb") as f:
+                                            pdf_bytes = f.read()
+                                        st.markdown("Anteprima PDF:")
+                                        mostra_anteprima_pdf(pdf_bytes, altezza=400)
+                                    else:
+                                        st.warning("PDF non disponibile su disco.")
+
+                                elif azione == "Scarica PDF fattura":
+                                    if pdf_path and os.path.exists(pdf_path):
+                                        with open(pdf_path, "rb") as f:
+                                            pdf_bytes = f.read()
+                                        st.download_button(
+                                            "📥 Scarica PDF fattura",
+                                            data=pdf_bytes,
+                                            file_name=os.path.basename(pdf_path),
+                                            mime="application/pdf",
+                                            key=f"dl_{row_index}",
+                                        )
+                                    else:
+                                        st.warning("PDF non disponibile su disco.")
+
+                                elif azione == "Scarica pacchetto":
+                                    st.info(
+                                        "Funzione 'Scarica pacchetto' non ancora implementata."
+                                    )
+
+                                elif azione == "Scarica PDF proforma":
+                                    st.info(
+                                        "Funzione 'PDF proforma' non ancora implementata."
+                                    )
+
+                                elif azione == "Modifica (placeholder)":
+                                    st.info(
+                                        "Funzione modifica non ancora implementata in questa versione."
+                                    )
+
+                                elif azione == "Duplica":
+                                    nuovo_num = get_next_invoice_number()
+                                    nuova_riga = row.copy()
+                                    nuova_riga["Numero"] = nuovo_num
+                                    nuova_riga["Data"] = str(date.today())
+                                    st.session_state.documenti_emessi = pd.concat(
+                                        [
+                                            st.session_state.documenti_emessi,
+                                            pd.DataFrame([nuova_riga]),
+                                        ],
+                                        ignore_index=True,
+                                    )
+                                    st.success(f"Fattura duplicata come {nuovo_num}.")
+                                    st.rerun()
+
+                                elif azione == "Elimina":
+                                    st.session_state.documenti_emessi = (
+                                        st.session_state.documenti_emessi.drop(
+                                            row_index
+                                        ).reset_index(drop=True)
+                                    )
+                                    st.warning("Fattura eliminata.")
+                                    st.rerun()
+
+                                elif azione == "Invia (placeholder)":
+                                    st.info(
+                                        "Funzione invio a SdI non ancora implementata."
+                                    )
 
     st.markdown("### 📄 Download PDF fatture emesse")
     df_e = st.session_state.documenti_emessi
@@ -610,6 +755,16 @@ elif pagina == "Crea nuova fattura":
             "PEC": cli_pec,
         }
 
+    # Tipologia XML
+    tipi_xml_label = [
+        "TD01 - Fattura",
+        "TD02 - Acconto/Anticipo su fattura",
+        "TD04 - Nota di credito",
+        "TD05 - Nota di debito",
+    ]
+    tipo_xml_label = st.selectbox("Tipo documento (XML)", tipi_xml_label, index=0)
+    tipo_xml_codice = tipo_xml_label.split(" ")[0]
+
     coln1, coln2 = st.columns(2)
     with coln1:
         numero = st.text_input("Numero fattura", get_next_invoice_number())
@@ -667,7 +822,7 @@ elif pagina == "Crea nuova fattura":
     col_t2.metric("IVA", f"EUR {_format_val_eur(iva_tot)}")
     col_t3.metric("Totale", f"EUR {_format_val_eur(totale)}")
 
-    stato = st.selectbox("Stato", ["Bozza", "Inviata", "Registrata"])
+    stato = st.selectbox("Stato", ["Creazione", "Creato", "Inviato"])
 
     if st.button("💾 Salva fattura emessa", type="primary"):
         if not cliente_corrente["Denominazione"]:
@@ -747,6 +902,7 @@ elif pagina == "Crea nuova fattura":
                         "Imponibile": imponibile,
                         "IVA": iva_tot,
                         "Importo": totale,
+                        "TipoXML": tipo_xml_codice,
                         "Stato": stato,
                         "UUID": "",
                         "PDF": pdf_path,
@@ -870,7 +1026,3 @@ st.markdown("---")
 st.caption(
     "Fisco Chiaro Consulting – Emesse gestite dall'app, PDF generati automaticamente."
 )
-
-   
-    
-      
