@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import date
 import os
 from fpdf import FPDF
+import base64
 
 # ==========================
 # CONFIGURAZIONE PAGINA
@@ -42,6 +43,10 @@ if "clienti" not in st.session_state:
 
 if "righe_correnti" not in st.session_state:
     st.session_state.righe_correnti = []
+
+# Per gestire lo switch "Nuovo cliente"
+if "forza_nuovo_cliente" not in st.session_state:
+    st.session_state.forza_nuovo_cliente = False
 
 # ==========================
 # FUNZIONE PDF (ROBUSTA)
@@ -90,10 +95,10 @@ def genera_pdf_fattura(
 
     for r in righe:
         desc = (r.get("desc") or "").replace("\n", " ").strip()
-        # se stringa senza spazi (es. codice lungo), inserisco spazi artificiali
+        # Se stringa senza spazi (es. codice lungo), inserisco spazi artificiali
         if " " not in desc and len(desc) > 20:
-            desc = " ".join(desc[i : i + 20] for i in range(0, len(desc), 20))
-        # taglio ulteriore per sicurezza
+            desc = " ".join(desc[i: i + 20] for i in range(0, len(desc), 20))
+        # Taglio ulteriore per sicurezza
         if len(desc) > 150:
             desc = desc[:147] + "..."
 
@@ -139,6 +144,21 @@ def genera_pdf_fattura(
 
     data = pdf.output(dest="S")  # bytes/bytearray
     return bytes(data)
+
+
+def mostra_anteprima_pdf(pdf_bytes: bytes, altezza: int = 600):
+    """Mostra un PDF inline come iframe tramite base64."""
+    try:
+        b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
+        pdf_display = f"""
+        <iframe src="data:application/pdf;base64,{b64_pdf}"
+                width="100%" height="{altezza}" type="application/pdf">
+        </iframe>
+        """
+        st.markdown(pdf_display, unsafe_allow_html=True)
+    except Exception as e:
+        st.warning(f"Impossibile mostrare l'anteprima PDF: {e}")
+
 
 # ==========================
 # SIDEBAR (STILE EFFATTA)
@@ -275,6 +295,8 @@ if pagina == "Lista documenti":
                         file_name=os.path.basename(pdf_path),
                         mime="application/pdf",
                     )
+                    st.markdown("#### Anteprima PDF")
+                    mostra_anteprima_pdf(pdf_bytes, altezza=500)
                 else:
                     st.warning("Il file PDF indicato non esiste più sul disco.")
 
@@ -284,13 +306,23 @@ if pagina == "Lista documenti":
 elif pagina == "Crea nuova fattura":
     st.subheader("Crea nuova fattura emessa")
 
-    col1, col2 = st.columns([2, 1])
     denominazioni = ["NUOVO"] + st.session_state.clienti["Denominazione"].tolist()
-    with col1:
-        cliente_sel = st.selectbox("Cliente", denominazioni)
-    with col2:
-        nuovo_cli_btn = st.button("➕ Nuovo cliente")
 
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        # Se è stata forzata la modalità "Nuovo cliente", mostriamo comunque la select
+        # ma utilizziamo il valore "NUOVO" nella logica sottostante
+        cliente_sel = st.selectbox("Cliente", denominazioni)
+
+    with col2:
+        if st.button("➕ Nuovo cliente"):
+            st.session_state.forza_nuovo_cliente = True
+
+    # Applica la forzatura, se richiesta
+    if st.session_state.forza_nuovo_cliente:
+        cliente_sel = "NUOVO"
+
+    # Dati cliente
     if cliente_sel == "NUOVO":
         cli_den = st.text_input("Denominazione cliente")
         cli_piva = st.text_input("P.IVA/CF")
@@ -301,6 +333,7 @@ elif pagina == "Crea nuova fattura":
             "Indirizzo": cli_ind,
         }
     else:
+        st.session_state.forza_nuovo_cliente = False  # resetto lo stato
         riga_cli = st.session_state.clienti[
             st.session_state.clienti["Denominazione"] == cliente_sel
         ].iloc[0]
@@ -332,6 +365,7 @@ elif pagina == "Crea nuova fattura":
     imponibile = 0.0
     iva_tot = 0.0
 
+    # Mostra e gestisci righe
     for i, r in enumerate(st.session_state.righe_correnti):
         c1, c2, c3, c4, c5 = st.columns([4, 1, 1, 1, 0.5])
         with c1:
@@ -379,14 +413,19 @@ elif pagina == "Crea nuova fattura":
 
     stato = st.selectbox("Stato", ["Bozza", "Inviata", "Registrata"])
 
+    # Per mostrare eventuale ultimo PDF creato in questa pagina
+    pdf_generato_bytes = None
+    pdf_generato_nome = None
+
     if st.button("💾 Salva fattura emessa", type="primary"):
         if not cliente_corrente["Denominazione"]:
             st.error("Inserisci almeno la denominazione del cliente.")
         elif not st.session_state.righe_correnti:
             st.error("Inserisci almeno una riga di fattura.")
         else:
+            # Salvataggio cliente nuovo in rubrica, se necessario
             if (
-                cliente_sel == "NUOVO"
+                (cliente_sel == "NUOVO" or st.session_state.forza_nuovo_cliente)
                 and cliente_corrente["Denominazione"]
                 and cliente_corrente["Denominazione"]
                 not in st.session_state.clienti["Denominazione"].tolist()
@@ -406,6 +445,7 @@ elif pagina == "Crea nuova fattura":
                     ignore_index=True,
                 )
 
+            # Genera PDF
             pdf_bytes = genera_pdf_fattura(
                 numero,
                 data_f,
@@ -415,11 +455,12 @@ elif pagina == "Crea nuova fattura":
                 iva_tot,
                 totale,
             )
-            pdf_filename = f"{numero.replace("/", "_")}.pdf"
+            pdf_filename = f"{numero.replace('/', '_')}.pdf"
             pdf_path = os.path.join(PDF_DIR, pdf_filename)
             with open(pdf_path, "wb") as f:
                 f.write(pdf_bytes)
 
+            # Registra fattura emessa
             nuova = pd.DataFrame(
                 [
                     {
@@ -441,13 +482,21 @@ elif pagina == "Crea nuova fattura":
             )
 
             st.session_state.righe_correnti = []
+            st.session_state.forza_nuovo_cliente = False
+
             st.success("✅ Fattura emessa salvata e trasformata in PDF.")
+
+            # Download immediato
             st.download_button(
                 label="📥 Scarica subito il PDF",
                 data=pdf_bytes,
                 file_name=pdf_filename,
                 mime="application/pdf",
             )
+
+            # Anteprima PDF
+            st.markdown("#### Anteprima PDF generato")
+            mostra_anteprima_pdf(pdf_bytes, altezza=600)
 
 # ==========================
 # ALTRE PAGINE
@@ -532,6 +581,3 @@ st.markdown("---")
 st.caption(
     "Fisco Chiaro Consulting – Emesse gestite dall'app, PDF generati automaticamente."
 )
-
-
-  
