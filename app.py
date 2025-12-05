@@ -529,7 +529,7 @@ def genera_pdf_fattura(
 
 
 # ==========================
-# SIDEBAR / NAVIGAZIONE
+# MENÙ / NAVIGAZIONE
 # ==========================
 PAGINE = [
     "Lista documenti",
@@ -573,6 +573,16 @@ with col_user:
 st.markdown("---")
 
 # ==========================
+# CONTATORI DOCUMENTI PER MESE (per le tab tipo "Novembre (2)")
+# ==========================
+docs_per_month = {m: 0 for m in range(1, 13)}
+df_tmp = st.session_state.documenti_emessi.copy()
+if not df_tmp.empty:
+    df_tmp["Data"] = pd.to_datetime(df_tmp["Data"], errors="coerce")
+    for m in range(1, 13):
+        docs_per_month[m] = (df_tmp["Data"].dt.month == m).sum()
+
+# ==========================
 # BARRA STATO / EMESSE / RICEVUTE
 # ==========================
 barra_ricerca = ""
@@ -609,8 +619,7 @@ if pagina in [
     with col_agg:
         st.button("AGGIORNA")
 
-    mesi = [
-        "Riepilogo",
+    nomi_mesi = [
         "Gennaio",
         "Febbraio",
         "Marzo",
@@ -624,6 +633,15 @@ if pagina in [
         "Novembre",
         "Dicembre",
     ]
+
+    mesi = ["Riepilogo"]
+    for m, nome in enumerate(nomi_mesi, start=1):
+        n_doc = docs_per_month.get(m, 0)
+        if n_doc > 0:
+            mesi.append(f"{nome} ({n_doc})")
+        else:
+            mesi.append(nome)
+
     tabs = st.tabs(mesi)
     idx_mese = date.today().month
 
@@ -717,9 +735,14 @@ if pagina == "Lista documenti":
                             [0.6, 4, 1.6, 1.4, 1.8]
                         )
 
+                        # ICONA A SINISTRA (PDF / B2B)
                         with col_icon:
-                            st.markdown("📄")
+                            if tipo_xml == "TD01" and piva_cf:
+                                st.markdown("🟥 **B2B**")
+                            else:
+                                st.markdown("📄")
 
+                        # BLOCCO CENTRALE
                         with col_info:
                             info_lines = []
                             info_lines.append(f"**{tipo_label}**")
@@ -735,12 +758,14 @@ if pagina == "Lista documenti":
                             info_lines.append("SERVIZIO")
                             st.markdown("  \n".join(info_lines))
 
+                        # IMPORTO + ESIGIBILITÀ
                         with col_imp:
                             st.markdown("**IMPORTO (EUR)**")
                             st.markdown(_format_val_eur(importo))
                             st.markdown("**ESIGIBILITÀ IVA**")
                             st.markdown("IMMEDIATA")
 
+                        # STATO
                         with col_stato:
                             st.markdown("**Stato**")
                             possibili_stati = ["Creazione", "Creato", "Inviato"]
@@ -757,91 +782,94 @@ if pagina == "Lista documenti":
                                 row_index, "Stato"
                             ] = new_stato
 
+                        # MENU A TENDINA AZIONI
                         with col_menu:
                             st.markdown("**Azioni**")
-                            azione = st.selectbox(
-                                "",
-                                [
-                                    "-",
-                                    "Visualizza",
-                                    "Scarica pacchetto",
-                                    "Scarica PDF fattura",
-                                    "Scarica PDF proforma",
-                                    "Modifica (placeholder)",
-                                    "Duplica",
-                                    "Elimina",
-                                    "Invia (placeholder)",
-                                ],
-                                key=f"azione_{row_index}",
-                                label_visibility="collapsed",
-                            )
+                            with st.popover("▼", use_container_width=True):
+                                st.markdown("**Seleziona azione**")
 
-                            if azione == "Visualizza":
-                                if pdf_path and os.path.exists(pdf_path):
-                                    with open(pdf_path, "rb") as f:
-                                        pdf_bytes = f.read()
-                                    st.markdown("Anteprima PDF:")
-                                    mostra_anteprima_pdf(pdf_bytes, altezza=400)
-                                else:
-                                    st.warning("PDF non disponibile su disco.")
+                                # Visualizza
+                                if st.button("👁 Visualizza", key=f"vis_{row_index}"):
+                                    if pdf_path and os.path.exists(pdf_path):
+                                        with open(pdf_path, "rb") as f:
+                                            pdf_bytes = f.read()
+                                        st.markdown("Anteprima PDF:")
+                                        mostra_anteprima_pdf(pdf_bytes, altezza=400)
+                                    else:
+                                        st.warning("PDF non disponibile su disco.")
 
-                            elif azione == "Scarica PDF fattura":
-                                if pdf_path and os.path.exists(pdf_path):
-                                    with open(pdf_path, "rb") as f:
-                                        pdf_bytes = f.read()
-                                    st.download_button(
-                                        "📥 Scarica PDF fattura",
-                                        data=pdf_bytes,
-                                        file_name=os.path.basename(pdf_path),
-                                        mime="application/pdf",
-                                        key=f"dl_{row_index}",
+                                # Scarica pacchetto (placeholder)
+                                if st.button(
+                                    "📦 Scarica pacchetto", key=f"pac_{row_index}"
+                                ):
+                                    st.info(
+                                        "Funzione 'Scarica pacchetto' non ancora implementata."
                                     )
-                                else:
-                                    st.warning("PDF non disponibile su disco.")
 
-                            elif azione == "Scarica pacchetto":
-                                st.info(
-                                    "Funzione 'Scarica pacchetto' non ancora implementata."
-                                )
+                                # Scarica PDF fattura
+                                if st.button(
+                                    "📄 Scarica PDF fattura", key=f"fatt_{row_index}"
+                                ):
+                                    if pdf_path and os.path.exists(pdf_path):
+                                        with open(pdf_path, "rb") as f:
+                                            pdf_bytes = f.read()
+                                        st.download_button(
+                                            "📥 Download PDF",
+                                            data=pdf_bytes,
+                                            file_name=os.path.basename(pdf_path),
+                                            mime="application/pdf",
+                                            key=f"dl_{row_index}",
+                                        )
+                                    else:
+                                        st.warning("PDF non disponibile su disco.")
 
-                            elif azione == "Scarica PDF proforma":
-                                st.info(
-                                    "Funzione 'PDF proforma' non ancora implementata."
-                                )
+                                # Scarica PDF proforma (placeholder)
+                                if st.button(
+                                    "📑 Scarica PDF proforma", key=f"prof_{row_index}"
+                                ):
+                                    st.info(
+                                        "Funzione 'PDF proforma' non ancora implementata."
+                                    )
 
-                            elif azione == "Modifica (placeholder)":
-                                st.info(
-                                    "Funzione modifica non ancora implementata in questa versione."
-                                )
+                                # Modifica (placeholder)
+                                if st.button(
+                                    "✏️ Modifica", key=f"mod_{row_index}"
+                                ):
+                                    st.info(
+                                        "Funzione modifica non ancora implementata in questa versione."
+                                    )
 
-                            elif azione == "Duplica":
-                                nuovo_num = get_next_invoice_number()
-                                nuova_riga = row.copy()
-                                nuova_riga["Numero"] = nuovo_num
-                                nuova_riga["Data"] = str(date.today())
-                                st.session_state.documenti_emessi = pd.concat(
-                                    [
-                                        st.session_state.documenti_emessi,
-                                        pd.DataFrame([nuova_riga]),
-                                    ],
-                                    ignore_index=True,
-                                )
-                                st.success(f"Fattura duplicata come {nuovo_num}.")
-                                st.rerun()
+                                # Duplica
+                                if st.button("🧬 Duplica", key=f"dup_{row_index}"):
+                                    nuovo_num = get_next_invoice_number()
+                                    nuova_riga = row.copy()
+                                    nuova_riga["Numero"] = nuovo_num
+                                    nuova_riga["Data"] = str(date.today())
+                                    st.session_state.documenti_emessi = pd.concat(
+                                        [
+                                            st.session_state.documenti_emessi,
+                                            pd.DataFrame([nuova_riga]),
+                                        ],
+                                        ignore_index=True,
+                                    )
+                                    st.success(f"Fattura duplicata come {nuovo_num}.")
+                                    st.rerun()
 
-                            elif azione == "Elimina":
-                                st.session_state.documenti_emessi = (
-                                    st.session_state.documenti_emessi.drop(
-                                        row_index
-                                    ).reset_index(drop=True)
-                                )
-                                st.warning("Fattura eliminata.")
-                                st.rerun()
+                                # Elimina
+                                if st.button("🗑 Elimina", key=f"del_{row_index}"):
+                                    st.session_state.documenti_emessi = (
+                                        st.session_state.documenti_emessi.drop(
+                                            row_index
+                                        ).reset_index(drop=True)
+                                    )
+                                    st.warning("Fattura eliminata.")
+                                    st.rerun()
 
-                            elif azione == "Invia (placeholder)":
-                                st.info(
-                                    "Funzione invio a SdI non ancora implementata."
-                                )
+                                # Invia (placeholder)
+                                if st.button("📨 Invia", key=f"inv_{row_index}"):
+                                    st.info(
+                                        "Funzione invio a SdI non ancora implementata."
+                                    )
 
     st.markdown("### 📄 Download PDF fatture emesse")
     df_e = st.session_state.documenti_emessi
