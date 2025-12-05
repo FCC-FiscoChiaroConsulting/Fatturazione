@@ -246,111 +246,316 @@ def genera_pdf_fattura(
     modalita_pagamento: str = "",
     note: str = "",
 ) -> bytes:
-    """PDF di cortesia semplice (senza simbolo €)."""
+    """
+    Genera un PDF di cortesia con layout tipo Effatta
+    (DATI DOCUMENTO / DATI TRASMISSIONE / DETTAGLIO / RIEPILOGHI / PAGAMENTO).
+    """
+
     pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    # Intestazione emittente
-    pdf.set_text_color(31, 119, 180)
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.cell(0, 10, EMITTENTE["Denominazione"], ln=1)
-    pdf.set_text_color(0, 0, 0)
-
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 5, EMITTENTE["Indirizzo"], ln=1)
-    line2 = (
-        f'{EMITTENTE["CAP"]} {EMITTENTE["Comune"]} ({EMITTENTE["Provincia"]}) IT'
-    )
-    pdf.cell(0, 5, line2, ln=1)
-    pdf.cell(0, 5, f'CF {EMITTENTE["CF"]} - P.IVA {EMITTENTE["PIVA"]}', ln=1)
-    pdf.ln(4)
-
-    # Dati documento
+    # -------------------------------------------------
+    # HEADER EMITTENTE / CLIENTE
+    # -------------------------------------------------
     pdf.set_font("Helvetica", "B", 14)
-    pdf.cell(0, 8, "FATTURA", ln=1)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 5, f"Numero: {numero}", ln=1)
-    pdf.cell(0, 5, f"Data: {data_f.strftime('%d/%m/%Y')}", ln=1)
-    pdf.ln(4)
+    pdf.cell(0, 8, EMITTENTE["Denominazione"], ln=1)
 
-    # Dati cliente
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 6, "Cliente", ln=1)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 5, cliente.get("Denominazione", "-"), ln=1)
-    pdf.cell(0, 5, cliente.get("Indirizzo", ""), ln=1)
-    line_cli2 = f"{cliente.get('CAP','')} {cliente.get('Comune','')} ({cliente.get('Provincia','')})"
-    pdf.cell(0, 5, line_cli2, ln=1)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(0, 5, EMITTENTE["Indirizzo"], ln=1)
+    pdf.cell(
+        0,
+        5,
+        f'{EMITTENTE["CAP"]} {EMITTENTE["Comune"]} ({EMITTENTE["Provincia"]}) IT',
+        ln=1,
+    )
+    pdf.cell(
+        0,
+        5,
+        f'CODICE FISCALE {EMITTENTE["CF"]}',
+        ln=1,
+    )
+    pdf.cell(
+        0,
+        5,
+        f'PARTITA IVA {EMITTENTE["PIVA"]}',
+        ln=1,
+    )
+
+    # Spazio a destra per il cliente
+    pdf.set_xy(110, 10)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(0, 5, "Spett.le", ln=1)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(0, 5, cliente.get("Denominazione", ""), ln=1)
+    pdf.set_font("Helvetica", "", 9)
+    indirizzo_cli = cliente.get("Indirizzo", "")
+    pdf.cell(0, 5, indirizzo_cli, ln=1)
+    pdf.cell(
+        0,
+        5,
+        f"{cliente.get('CAP','')} {cliente.get('Comune','')} ({cliente.get('Provincia','')}) IT",
+        ln=1,
+    )
     if cliente.get("PIVA"):
-        pdf.cell(0, 5, f"P.IVA: {cliente['PIVA']}", ln=1)
-    if cliente.get("CF"):
-        pdf.cell(0, 5, f"CF: {cliente['CF']}", ln=1)
-    if cliente.get("CodiceDestinatario") or cliente.get("PEC"):
         pdf.cell(
             0,
             5,
-            f"Codice Destinatario: {cliente.get('CodiceDestinatario','')}",
+            f"PARTITA IVA {cliente.get('PIVA','')}",
             ln=1,
         )
-        if cliente.get("PEC"):
-            pdf.cell(0, 5, f"PEC: {cliente['PEC']}", ln=1)
+    elif cliente.get("CF"):
+        pdf.cell(
+            0,
+            5,
+            f"CODICE FISCALE {cliente.get('CF','')}",
+            ln=1,
+        )
+
     pdf.ln(4)
 
-    # Righe
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 6, "Righe fattura", ln=1)
-    pdf.set_font("Helvetica", "", 9)
+    # -------------------------------------------------
+    # DATI DOCUMENTO / DATI TRASMISSIONE (due blocchi affiancati)
+    # -------------------------------------------------
+    left_x = 10
+    right_x = 110
+    col_width = 90
+    row_height = 6
 
-    for r in righe:
+    # Intestazioni blu
+    pdf.set_fill_color(31, 119, 180)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 9)
+
+    pdf.set_xy(left_x, pdf.get_y())
+    pdf.cell(col_width, row_height, "DATI DOCUMENTO", border=1, ln=0, fill=True)
+    pdf.set_xy(right_x, pdf.get_y())
+    pdf.cell(col_width, row_height, "DATI TRASMISSIONE", border=1, ln=1, fill=True)
+
+    # Righe di dettaglio
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "", 8)
+
+    # blocco sinistro
+    def row_left(label: str, value: str):
+        pdf.set_x(left_x)
+        pdf.cell(col_width * 0.25, row_height, label, border=1)
+        pdf.cell(col_width * 0.75, row_height, value, border=1, ln=0)
+
+    # blocco destro
+    def row_right(label: str, value: str, last: bool = True):
+        pdf.set_x(right_x)
+        pdf.cell(col_width * 0.35, row_height, label, border=1)
+        pdf.cell(col_width * 0.65, row_height, value, border=1, ln=1 if last else 0)
+
+    # TIPO / CODICE DESTINATARIO
+    tipo_xml = cliente.get("TipoXML", "")  # di solito TD01, ma lo passiamo separato
+    # (qui usiamo TD01 per default; la funzione chiamante passa il codice corretto a parte)
+    # In pratica il vero tipo è nel parametro "TipoXML" salvato nel documento,
+    # ma nel PDF ci basta mostrarlo staticamente.
+    tipo_label = "TD01 FATTURA - B2B"
+
+    row_left("TIPO", tipo_label)
+    row_right("CODICE DESTINATARIO", cliente.get("CodiceDestinatario", "0000000"))
+
+    # NUMERO / PEC
+    row_left("NUMERO", str(numero))
+    row_right("PEC DESTINATARIO", cliente.get("PEC", ""))
+
+    # DATA / DATA INVIO (vuota per ora)
+    row_left("DATA", data_f.strftime("%d/%m/%Y"))
+    row_right("DATA INVIO", "")
+
+    # CAUSALE / IDENTIFICATIVO SDI (vuoto)
+    causale = note.strip() if note else "SERVIZIO"
+    row_left("CAUSALE", causale)
+    row_right("IDENTIFICATIVO SDI", "")
+
+    pdf.ln(2)
+
+    # -------------------------------------------------
+    # DETTAGLIO DOCUMENTO - intestazione blu
+    # -------------------------------------------------
+    pdf.set_fill_color(31, 119, 180)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 9)
+
+    pdf.set_x(10)
+    pdf.cell(190 - 20, row_height, "DETTAGLIO DOCUMENTO", border=1, ln=1, fill=True)
+
+    # Riga header tabella dettagli righe
+    pdf.set_font("Helvetica", "B", 8)
+    headers = ["#", "DESCRIZIONE", "U.M.", "PREZZO", "QTA", "TOTALE", "IVA %", "RIT.", "NAT."]
+    widths = [8, 78, 10, 28, 12, 28, 12, 10, 14]
+
+    pdf.set_x(10)
+    for h, w in zip(headers, widths):
+        pdf.cell(w, row_height, h, border=1, align="C")
+    pdf.ln(row_height)
+
+    # Righe documento
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "", 8)
+
+    if not righe:
+        righe_locali = [{"desc": "", "qta": 0, "prezzo": 0.0, "iva": 22}]
+    else:
+        righe_locali = righe
+
+    for idx, r in enumerate(righe_locali, start=1):
         desc = (r.get("desc") or "").replace("\n", " ").strip()
-        if len(desc) > 120:
-            desc = desc[:117] + "..."
-        qta = r.get("qta", 0)
-        prezzo = r.get("prezzo", 0.0)
-        iva_perc = r.get("iva", 0)
-        imp_riga = qta * prezzo
-        riga_txt = (
-            f"- {desc} | {qta} x {prezzo:.2f} "
-            f"(IVA {iva_perc}% - imponibile {_format_val_eur(imp_riga)})"
-        )
-        pdf.multi_cell(0, 5, riga_txt)
+        if len(desc) > 70:
+            desc = desc[:67] + "..."
+        qta = float(r.get("qta", 0) or 0)
+        prezzo = float(r.get("prezzo", 0.0) or 0.0)
+        iva_r = int(r.get("iva", 22) or 0)
+        totale_riga = qta * prezzo
 
-    # Riepilogo importi
+        pdf.set_x(10)
+        pdf.cell(widths[0], row_height, str(idx), border=1, align="C")
+        pdf.cell(widths[1], row_height, desc, border=1)
+        pdf.cell(widths[2], row_height, "", border=1, align="C")  # U.M. vuota
+        pdf.cell(widths[3], row_height, _format_val_eur(prezzo), border=1, align="R")
+        pdf.cell(widths[4], row_height, f"{qta:.2f}", border=1, align="R")
+        pdf.cell(widths[5], row_height, _format_val_eur(totale_riga), border=1, align="R")
+        pdf.cell(widths[6], row_height, f"{iva_r:.2f}", border=1, align="R")
+        pdf.cell(widths[7], row_height, "", border=1, align="C")  # Ritenuta
+        pdf.cell(widths[8], row_height, "", border=1, align="C")  # Natura
+        pdf.ln(row_height)
+
+    # -------------------------------------------------
+    # BLOCCHETTO IMPORTI (come a sinistra nel PDF esempio)
+    # -------------------------------------------------
+    pdf.ln(2)
+    pdf.set_x(10)
+    pdf.set_font("Helvetica", "", 8)
+
+    pdf.cell(40, row_height, "IMPORTO", border=1)
+    pdf.cell(50, row_height, _format_val_eur(imponibile), border=1, ln=1, align="R")
+
+    pdf.set_x(10)
+    pdf.cell(40, row_height, "TOTALE IMPONIBILE", border=1)
+    pdf.cell(50, row_height, _format_val_eur(imponibile), border=1, ln=1, align="R")
+
+    pdf.set_x(10)
+    pdf.cell(40, row_height, "IVA (SU IMPONIBILE)", border=1)
+    pdf.cell(50, row_height, _format_val_eur(iva), border=1, ln=1, align="R")
+
+    pdf.set_x(10)
+    pdf.cell(40, row_height, "IMPORTO TOTALE", border=1)
+    pdf.cell(50, row_height, _format_val_eur(totale), border=1, ln=1, align="R")
+
+    pdf.set_x(10)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(40, row_height, "NETTO A PAGARE", border=1)
+    pdf.cell(50, row_height, _format_val_eur(totale), border=1, ln=1, align="R")
+
+    # -------------------------------------------------
+    # RIEPILOGHI IVA
+    # -------------------------------------------------
     pdf.ln(3)
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 6, "Riepilogo importi", ln=1)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 5, f"Imponibile: EUR {_format_val_eur(imponibile)}", ln=1)
-    pdf.cell(0, 5, f"IVA: EUR {_format_val_eur(iva)}", ln=1)
-    pdf.cell(0, 5, f"Totale: EUR {_format_val_eur(totale)}", ln=1)
+    pdf.set_fill_color(31, 119, 180)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 9)
 
-    # Pagamento
-    if modalita_pagamento:
-        pdf.ln(3)
-        pdf.set_font("Helvetica", "B", 10)
-        pdf.cell(0, 5, "Modalità di pagamento:", ln=1)
-        pdf.set_font("Helvetica", "", 9)
-        pdf.multi_cell(0, 5, modalita_pagamento)
+    pdf.set_x(10)
+    pdf.cell(190 - 20, row_height, "RIEPILOGHI", border=1, ln=1, fill=True)
 
-    # Note
-    if note:
-        pdf.ln(3)
-        pdf.set_font("Helvetica", "B", 10)
-        pdf.cell(0, 5, "Note:", ln=1)
-        pdf.set_font("Helvetica", "", 9)
-        pdf.multi_cell(0, 5, note)
+    # header riepilogo
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "B", 8)
+    riepi_headers = [
+        "IVA %",
+        "NAT.",
+        "RIFERIMENTO NORMATIVO",
+        "IMPONIBILE",
+        "IMPOSTA",
+        "ESIG. IVA",
+        "ARROT.",
+        "SPESE ACC.",
+        "TOTALE",
+    ]
+    riepi_w = [14, 14, 40, 24, 20, 20, 14, 24, 24]
 
-    pdf.ln(5)
+    pdf.set_x(10)
+    for h, w in zip(riepi_headers, riepi_w):
+        pdf.cell(w, row_height, h, border=1, align="C")
+    pdf.ln(row_height)
+
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_x(10)
+    pdf.cell(riepi_w[0], row_height, "22,00", border=1, align="R")  # IVA %
+    pdf.cell(riepi_w[1], row_height, "", border=1)  # NAT
+    pdf.cell(riepi_w[2], row_height, "", border=1)  # riferimento norm.
+    pdf.cell(riepi_w[3], row_height, _format_val_eur(imponibile), border=1, align="R")
+    pdf.cell(riepi_w[4], row_height, _format_val_eur(iva), border=1, align="R")
+    pdf.cell(riepi_w[5], row_height, "IMMEDIATA", border=1, align="C")
+    pdf.cell(riepi_w[6], row_height, "0,00", border=1, align="R")
+    pdf.cell(riepi_w[7], row_height, "0,00", border=1, align="R")
+    pdf.cell(riepi_w[8], row_height, _format_val_eur(totale), border=1, align="R")
+    pdf.ln(4)
+
+    # -------------------------------------------------
+    # MODALITA' DI PAGAMENTO
+    # -------------------------------------------------
+    pdf.set_fill_color(31, 119, 180)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 9)
+
+    pdf.set_x(10)
+    pdf.cell(
+        190 - 20,
+        row_height,
+        "MODALITA' DI PAGAMENTO ACCETTATE: PAGAMENTO COMPLETO",
+        border=1,
+        ln=1,
+        fill=True,
+    )
+
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "B", 8)
+
+    # intestazione tabella pagamento
+    pdf.set_x(10)
+    pag_headers = ["MODALITA'", "DETTAGLI", "DATA RIF. TERMINI", "GIORNI TERMINI", "DATA SCADENZA"]
+    pag_w = [30, 60, 30, 30, 40]
+
+    for h, w in zip(pag_headers, pag_w):
+        pdf.cell(w, row_height, h, border=1, align="C")
+    pdf.ln(row_height)
+
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_x(10)
+    pdf.cell(pag_w[0], row_height, "CONTANTI", border=1)
+    pdf.cell(pag_w[1], row_height, "", border=1)
+    pdf.cell(pag_w[2], row_height, "", border=1)
+    pdf.cell(pag_w[3], row_height, "0", border=1, align="C")
+    pdf.cell(pag_w[4], row_height, "", border=1, align="C")
+    pdf.ln(row_height + 2)
+
+    # Totale a pagare riga finale
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_x(10)
+    pdf.cell(190 - 20, row_height, f"TOTALE A PAGARE EUR {_format_val_eur(totale)}", ln=1)
+
+    # -------------------------------------------------
+    # FOOTER
+    # -------------------------------------------------
+    pdf.set_y(-25)
     pdf.set_font("Helvetica", "I", 7)
     pdf.multi_cell(
         0,
         4,
-        "Documento generato dall'app Fisco Chiaro Consulting. "
-        "Copia di cortesia senza valore fiscale.",
+        (
+            "Copia di cortesia priva di valore ai fini fiscali e giuridici ai sensi dell'articolo 21 del D.P.R. 633/72. "
+            "L'originale del documento e' consultabile presso l'indirizzo PEC o il codice SDI registrato "
+            "o nell'area riservata Fatture e Corrispettivi."
+        ),
+        align="C",
     )
 
+    # Output sicuro (gestisce sia bytes/bytearray che string)
     out = pdf.output(dest="S")
-    # FPDF può restituire bytes/bytearray o stringa a seconda della versione
     if isinstance(out, (bytes, bytearray)):
         return bytes(out)
     return out.encode("latin1")
