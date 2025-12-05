@@ -41,37 +41,50 @@ COLONNE_DOC = [
     "Numero",
     "Data",
     "Controparte",
-    "Importo",
+    "Imponibile",
+    "IVA",
+    "Importo",     # totale a pagare
     "Stato",
     "UUID",
     "PDF",
 ]
 
+CLIENTI_COLONNE = [
+    "Denominazione",
+    "PIVA",
+    "CF",
+    "Indirizzo",
+    "CAP",
+    "Comune",
+    "Provincia",
+    "CodiceDestinatario",
+    "PEC",
+    "Tipo",  # Cliente/Fornitore
+]
+
+# documenti emessi
 if "documenti_emessi" not in st.session_state:
     st.session_state.documenti_emessi = pd.DataFrame(columns=COLONNE_DOC)
+else:
+    # garantisco tutte le colonne
+    for col in COLONNE_DOC:
+        if col not in st.session_state.documenti_emessi.columns:
+            st.session_state.documenti_emessi[col] = 0 if col in ["Imponibile", "IVA", "Importo"] else ""
 
+# rubrica clienti
 if "clienti" not in st.session_state:
-    st.session_state.clienti = pd.DataFrame(
-        columns=[
-            "Denominazione",
-            "PIVA",
-            "CF",
-            "Indirizzo",
-            "CAP",
-            "Comune",
-            "Provincia",
-            "Tipo",
-        ]
-    )
+    st.session_state.clienti = pd.DataFrame(columns=CLIENTI_COLONNE)
+else:
+    for col in CLIENTI_COLONNE:
+        if col not in st.session_state.clienti.columns:
+            st.session_state.clienti[col] = ""
 
 if "righe_correnti" not in st.session_state:
     st.session_state.righe_correnti = []
 
-# etichetta cliente selezionato (NON è la key del widget)
 if "cliente_corrente_label" not in st.session_state:
     st.session_state.cliente_corrente_label = "NUOVO"
 
-# pagina corrente (NON è la key del radio)
 if "pagina_corrente" not in st.session_state:
     st.session_state.pagina_corrente = "Dashboard"
 
@@ -124,6 +137,98 @@ def get_next_invoice_number() -> str:
             seq = max_seq + 1
 
     return f"{prefix}{seq:03d}"
+
+
+def crea_riepilogo_fatture_emesse(df: pd.DataFrame):
+    """Riepilogo per periodo: Importo a pagare / Imponibile / IVA."""
+    if df.empty:
+        st.info("Nessuna fattura emessa per creare il riepilogo.")
+        return
+
+    df = df.copy()
+    df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
+
+    # selezione anno
+    anni = sorted(df["Data"].dt.year.dropna().unique())
+    if not anni:
+        st.info("Nessuna data valida sulle fatture emesse.")
+        return
+
+    anno_default = date.today().year
+    if anno_default not in anni:
+        anno_default = anni[-1]
+
+    idx_default = list(anni).index(anno_default)
+    anno_sel = st.selectbox("Anno", anni, index=idx_default, key="anno_riepilogo_emesse")
+
+    df_anno = df[df["Data"].dt.year == anno_sel]
+
+    mesi_label = [
+        "Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
+        "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre",
+    ]
+
+    rows = []
+
+    # mesi
+    for m in range(1, 13):
+        df_m = df_anno[df_anno["Data"].dt.month == m]
+        imp_tot = df_m["Importo"].sum()
+        imp_imp = df_m["Imponibile"].sum()
+        iva_tot = df_m["IVA"].sum()
+
+        rows.append(
+            {
+                "Periodo": mesi_label[m - 1],
+                "Importo a pagare": _format_val_eur(imp_tot),
+                "Imponibile": _format_val_eur(imp_imp),
+                "IVA": _format_val_eur(iva_tot),
+            }
+        )
+
+    # trimestri
+    trimestri = {
+        "1° Trimestre": [1, 2, 3],
+        "2° Trimestre": [4, 5, 6],
+        "3° Trimestre": [7, 8, 9],
+        "4° Trimestre": [10, 11, 12],
+    }
+
+    for nome, months in trimestri.items():
+        df_q = df_anno[df_anno["Data"].dt.month.isin(months)]
+        imp_tot = df_q["Importo"].sum()
+        imp_imp = df_q["Imponibile"].sum()
+        iva_tot = df_q["IVA"].sum()
+        rows.append(
+            {
+                "Periodo": nome,
+                "Importo a pagare": _format_val_eur(imp_tot),
+                "Imponibile": _format_val_eur(imp_imp),
+                "IVA": _format_val_eur(iva_tot),
+            }
+        )
+
+    # annuale
+    imp_tot = df_anno["Importo"].sum()
+    imp_imp = df_anno["Imponibile"].sum()
+    iva_tot = df_anno["IVA"].sum()
+    rows.append(
+        {
+            "Periodo": "Annuale",
+            "Importo a pagare": _format_val_eur(imp_tot),
+            "Imponibile": _format_val_eur(imp_imp),
+            "IVA": _format_val_eur(iva_tot),
+        }
+    )
+
+    df_riep = pd.DataFrame(rows)
+
+    st.markdown("### Prospetto riepilogativo fatture emesse")
+    st.dataframe(
+        df_riep,
+        use_container_width=True,
+        hide_index=True,
+    )
 
 
 # ==========================
@@ -184,6 +289,8 @@ def genera_pdf_fattura(
     prov_cli = cliente.get("Provincia", "")
     piva_cli = cliente.get("PIVA", "")
     cf_cli = cliente.get("CF", "")
+    cod_dest = cliente.get("CodiceDestinatario", "") or "0000000"
+    pec_dest = cliente.get("PEC", "") or ""
 
     cli_line2_parts = []
     if cap_cli:
@@ -258,11 +365,11 @@ def genera_pdf_fattura(
 
     pdf.set_xy(105, pdf.get_y() - 24)
     pdf.cell(35, 6, "CODICE DESTINATARIO", border=1)
-    pdf.cell(60, 6, "0000000", border=1, ln=1)
+    pdf.cell(60, 6, cod_dest, border=1, ln=1)
 
     pdf.set_x(105)
     pdf.cell(35, 6, "PEC DESTINATARIO", border=1)
-    pdf.cell(60, 6, "", border=1, ln=1)
+    pdf.cell(60, 6, pec_dest, border=1, ln=1)
 
     pdf.set_x(105)
     pdf.cell(35, 6, "DATA INVIO", border=1)
@@ -485,7 +592,6 @@ with st.sidebar:
         label_visibility="collapsed",
     )
 
-# sincronizzo pagina corrente
 st.session_state.pagina_corrente = pagina
 
 # ==========================
@@ -557,7 +663,8 @@ if pagina in [
         "Dicembre",
     ]
     tabs = st.tabs(mesi)
-    idx_mese = date.today().month
+    idx_mese = date.today().month  # 1-12
+
 
 # ==========================
 # PAGINA: LISTA DOCUMENTI
@@ -565,9 +672,16 @@ if pagina in [
 if pagina == "Lista documenti":
     st.subheader("Lista documenti")
 
+    df_e_all = st.session_state.documenti_emessi.copy()
+
     if tabs is not None:
+        # TAB RIEPILOGO (indice 0)
+        with tabs[0]:
+            crea_riepilogo_fatture_emesse(df_e_all)
+
+        # TAB MESE CORRENTE (come prima)
         with tabs[idx_mese]:
-            df_e = st.session_state.documenti_emessi.copy()
+            df_e = df_e_all.copy()
 
             if not df_e.empty:
                 if barra_ricerca:
@@ -580,11 +694,19 @@ if pagina == "Lista documenti":
                         .str.contains(barra_ricerca, case=False, na=False)
                     )
                     df_e = df_e[mask]
-                st.dataframe(
-                    df_e.drop(columns=["PDF"]),
-                    use_container_width=True,
-                    height=400,
-                )
+
+                # filtro per mese corrente
+                df_e["Data"] = pd.to_datetime(df_e["Data"], errors="coerce")
+                df_e = df_e[df_e["Data"].dt.month == idx_mese]
+
+                if not df_e.empty:
+                    st.dataframe(
+                        df_e.drop(columns=["PDF"]),
+                        use_container_width=True,
+                        height=400,
+                    )
+                else:
+                    st.info("Nessun documento emesso per il mese selezionato.")
             else:
                 st.info("Nessun documento emesso presente.")
 
@@ -634,305 +756,3 @@ elif pagina == "Crea nuova fattura":
         cliente_sel = st.selectbox(
             "Cliente",
             denominazioni,
-            index=default_idx,
-        )
-
-        st.session_state.cliente_corrente_label = cliente_sel
-
-    with col2:
-        if st.button("➕ Nuovo cliente"):
-            st.session_state.cliente_corrente_label = "NUOVO"
-            st.rerun()
-
-    # Dati cliente
-    if cliente_sel == "NUOVO":
-        cli_den = st.text_input("Denominazione cliente")
-        cli_piva = st.text_input("P.IVA")
-        cli_cf = st.text_input("Codice Fiscale")
-        cli_ind = st.text_input("Indirizzo (via/piazza, civico)")
-        colc1, colc2, colc3 = st.columns(3)
-        with colc1:
-            cli_cap = st.text_input("CAP")
-        with colc2:
-            cli_com = st.text_input("Comune")
-        with colc3:
-            cli_prov = st.text_input("Provincia (es. BA)")
-        cliente_corrente = {
-            "Denominazione": cli_den,
-            "PIVA": cli_piva,
-            "CF": cli_cf,
-            "Indirizzo": cli_ind,
-            "CAP": cli_cap,
-            "Comune": cli_com,
-            "Provincia": cli_prov,
-        }
-    else:
-        riga_cli = st.session_state.clienti[
-            st.session_state.clienti["Denominazione"] == cliente_sel
-        ].iloc[0]
-        cli_den = st.text_input("Denominazione", riga_cli.get("Denominazione", ""))
-        cli_piva = st.text_input("P.IVA", riga_cli.get("PIVA", ""))
-        cli_cf = st.text_input("Codice Fiscale", riga_cli.get("CF", ""))
-        cli_ind = st.text_input(
-            "Indirizzo (via/piazza, civico)", riga_cli.get("Indirizzo", "")
-        )
-        colc1, colc2, colc3 = st.columns(3)
-        with colc1:
-            cli_cap = st.text_input("CAP", riga_cli.get("CAP", ""))
-        with colc2:
-            cli_com = st.text_input("Comune", riga_cli.get("Comune", ""))
-        with colc3:
-            cli_prov = st.text_input("Provincia (es. BA)", riga_cli.get("Provincia", ""))
-        cliente_corrente = {
-            "Denominazione": cli_den,
-            "PIVA": cli_piva,
-            "CF": cli_cf,
-            "Indirizzo": cli_ind,
-            "CAP": cli_cap,
-            "Comune": cli_com,
-            "Provincia": cli_prov,
-        }
-
-    coln1, coln2 = st.columns(2)
-    with coln1:
-        numero_suggerito = get_next_invoice_number()
-        numero = st.text_input(
-            "Numero fattura",
-            numero_suggerito,
-        )
-    with coln2:
-        data_f = st.date_input("Data fattura", date.today())
-
-    modalita_pagamento = st.text_input(
-        "Modalità di pagamento (es. Bonifico bancario su IBAN ...)",
-        value="BONIFICO bancario su IBAN ................",
-    )
-
-    note = st.text_area(
-        "Note fattura (facoltative)",
-        value="",
-        height=80,
-    )
-
-    st.markdown("### Righe fattura")
-    if st.button("➕ Aggiungi riga"):
-        st.session_state.righe_correnti.append(
-            {"desc": "", "qta": 1.0, "prezzo": 0.0, "iva": 22}
-        )
-        st.rerun()
-
-    imponibile = 0.0
-    iva_tot = 0.0
-
-    for i, r in enumerate(st.session_state.righe_correnti):
-        c1, c2, c3, c4, c5 = st.columns([4, 1, 1, 1, 0.5])
-        with c1:
-            r["desc"] = st.text_input("Descrizione", r["desc"], key=f"desc_{i}")
-        with c2:
-            r["qta"] = st.number_input(
-                "Q.tà", min_value=0.0, value=r["qta"], key=f"qta_{i}"
-            )
-        with c3:
-            r["prezzo"] = st.number_input(
-                "Prezzo", min_value=0.0, value=r["prezzo"], key=f"prz_{i}"
-            )
-        with c4:
-            r["iva"] = st.selectbox(
-                "IVA%",
-                [22, 10, 5, 4, 0],
-                index=[22, 10, 5, 4, 0].index(r["iva"]),
-                key=f"iva_{i}",
-            )
-        with c5:
-            if st.button("🗑️", key=f"del_{i}"):
-                st.session_state.righe_correnti.pop(i)
-                st.rerun()
-
-        imp_riga = r["qta"] * r["prezzo"]
-        iva_riga = imp_riga * r["iva"] / 100
-        imponibile += imp_riga
-        iva_tot += iva_riga
-
-    totale = imponibile + iva_tot
-
-    col_t1, col_t2, col_t3 = st.columns(3)
-    col_t1.metric("Imponibile", f"EUR {_format_val_eur(imponibile)}")
-    col_t2.metric("IVA", f"EUR {_format_val_eur(iva_tot)}")
-    col_t3.metric("Totale", f"EUR {_format_val_eur(totale)}")
-
-    stato = st.selectbox("Stato", ["Bozza", "Inviata", "Registrata"])
-
-    if st.button("💾 Salva fattura emessa", type="primary"):
-        if not cliente_corrente["Denominazione"]:
-            st.error("Inserisci almeno la denominazione del cliente.")
-        elif not st.session_state.righe_correnti:
-            st.error("Inserisci almeno una riga di fattura.")
-        else:
-            # salva cliente se nuovo
-            if (
-                cliente_corrente["Denominazione"]
-                and cliente_corrente["Denominazione"]
-                not in st.session_state.clienti["Denominazione"].tolist()
-            ):
-                nuovo_cli = pd.DataFrame(
-                    [
-                        {
-                            "Denominazione": cliente_corrente["Denominazione"],
-                            "PIVA": cliente_corrente["PIVA"],
-                            "CF": cliente_corrente["CF"],
-                            "Indirizzo": cliente_corrente["Indirizzo"],
-                            "CAP": cliente_corrente["CAP"],
-                            "Comune": cliente_corrente["Comune"],
-                            "Provincia": cliente_corrente["Provincia"],
-                            "Tipo": "Cliente",
-                        }
-                    ]
-                )
-                st.session_state.clienti = pd.concat(
-                    [st.session_state.clienti, nuovo_cli],
-                    ignore_index=True,
-                )
-                st.info("Cliente salvato in Rubrica.")
-
-            # genera PDF
-            pdf_bytes = genera_pdf_fattura(
-                numero,
-                data_f,
-                cliente_corrente,
-                st.session_state.righe_correnti,
-                imponibile,
-                iva_tot,
-                totale,
-                modalita_pagamento=modalita_pagamento,
-                note=note,
-            )
-            pdf_filename = f"{numero.replace('/', '_')}.pdf"
-            pdf_path = os.path.join(PDF_DIR, pdf_filename)
-            with open(pdf_path, "wb") as f:
-                f.write(pdf_bytes)
-
-            nuova = pd.DataFrame(
-                [
-                    {
-                        "Tipo": "Emessa",
-                        "Numero": numero,
-                        "Data": str(data_f),
-                        "Controparte": cliente_corrente["Denominazione"],
-                        "Importo": totale,
-                        "Stato": stato,
-                        "UUID": "",
-                        "PDF": pdf_path,
-                    }
-                ],
-                columns=COLONNE_DOC,
-            )
-            st.session_state.documenti_emessi = pd.concat(
-                [st.session_state.documenti_emessi, nuova],
-                ignore_index=True,
-            )
-
-            st.session_state.righe_correnti = []
-
-            st.success("✅ Fattura emessa salvata, cliente registrato in Rubrica e PDF generato.")
-
-            st.download_button(
-                label="📥 Scarica subito il PDF",
-                data=pdf_bytes,
-                file_name=pdf_filename,
-                mime="application/pdf",
-            )
-
-            st.markdown("#### Anteprima PDF generato")
-            mostra_anteprima_pdf(pdf_bytes, altezza=600)
-
-# ==========================
-# ALTRE PAGINE
-# ==========================
-elif pagina == "Download (documenti inviati)":
-    st.subheader("Download documenti inviati")
-    st.info("Area placeholder: qui potrai elencare e scaricare i documenti inviati allo SdI.")
-
-elif pagina == "Carica pacchetto AdE":
-    st.subheader("Carica pacchetto AdE (ZIP da cassetto fiscale)")
-    uploaded_zip = st.file_uploader(
-        "Carica file ZIP (fatture + metadati)", type=["zip"]
-    )
-    if uploaded_zip:
-        st.write("Nome file caricato:", uploaded_zip.name)
-        st.info("Parsing del pacchetto non ancora implementato in questa versione.")
-
-elif pagina == "Rubrica":
-    st.subheader("Rubrica (Clienti / Fornitori)")
-
-    colf1, colf2 = st.columns(2)
-    with colf1:
-        filtra_clienti = st.checkbox("Mostra clienti", value=True)
-    with colf2:
-        filtra_fornitori = st.checkbox("Mostra fornitori", value=True)
-
-    with st.form("nuovo_contatto"):
-        col1, col2 = st.columns(2)
-        with col1:
-            den = st.text_input("Denominazione")
-        with col2:
-            piva = st.text_input("P.IVA")
-        cf = st.text_input("Codice Fiscale")
-        ind = st.text_input("Indirizzo (via/piazza, civico)")
-        colc1, colc2, colc3 = st.columns(3)
-        with colc1:
-            cap = st.text_input("CAP")
-        with colc2:
-            com = st.text_input("Comune")
-        with colc3:
-            prov = st.text_input("Provincia (es. BA)")
-        tipo = st.selectbox("Tipo", ["Cliente", "Fornitore"])
-        if st.form_submit_button("💾 Salva contatto"):
-            nuovo = pd.DataFrame(
-                [
-                    {
-                        "Denominazione": den,
-                        "PIVA": piva,
-                        "CF": cf,
-                        "Indirizzo": ind,
-                        "CAP": cap,
-                        "Comune": com,
-                        "Provincia": prov,
-                        "Tipo": tipo,
-                    }
-                ]
-            )
-            st.session_state.clienti = pd.concat(
-                [st.session_state.clienti, nuovo],
-                ignore_index=True,
-            )
-            st.success("Contatto salvato")
-
-    df_c = st.session_state.clienti.copy()
-    if not df_c.empty:
-        mask = []
-        for _, r in df_c.iterrows():
-            if r["Tipo"] == "Cliente" and filtra_clienti:
-                mask.append(True)
-            elif r["Tipo"] == "Fornitore" and filtra_fornitori:
-                mask.append(True)
-            else:
-                mask.append(False)
-        df_c = df_c[pd.Series(mask)]
-        st.dataframe(df_c, use_container_width=True)
-    else:
-        st.info("Nessun contatto in rubrica.")
-
-else:  # Dashboard
-    st.subheader("Dashboard")
-    df_e = st.session_state.documenti_emessi
-    num_emesse = len(df_e)
-    tot_emesse = df_e["Importo"].sum() if not df_e.empty else 0.0
-
-    col1, col2 = st.columns(2)
-    col1.metric("Fatture emesse (app)", num_emesse)
-    col2.metric("Totale emesso", f"EUR {_format_val_eur(tot_emesse)}")
-
-st.markdown("---")
-st.caption(
-    "Fisco Chiaro Consulting – Emesse gestite dall'app, PDF generati automaticamente."
-)
