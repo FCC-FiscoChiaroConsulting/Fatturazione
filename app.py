@@ -67,15 +67,16 @@ if "clienti" not in st.session_state:
 if "righe_correnti" not in st.session_state:
     st.session_state.righe_correnti = []
 
-if "forza_nuovo_cliente" not in st.session_state:
-    st.session_state.forza_nuovo_cliente = False
+# selezione cliente controllata
+if "cliente_sel" not in st.session_state:
+    st.session_state.cliente_sel = "NUOVO"
 
 
 # ==========================
 # FUNZIONI DI SUPPORTO
 # ==========================
 def _format_val_eur(val: float) -> str:
-    """Formatta un numero in stile EUR italiano."""
+    """Formatta un numero in stile EUR italiano (senza simbolo €)."""
     return (
         f"{val:,.2f}"
         .replace(",", "X")
@@ -140,6 +141,7 @@ def genera_pdf_fattura(
 ) -> bytes:
     """
     Genera PDF della fattura con layout tipo copia di cortesia SdI.
+    ATTENZIONE: niente simbolo "€" (fpdf base non lo supporta).
     """
     pdf = FPDF()
     pdf.add_page()
@@ -147,7 +149,7 @@ def genera_pdf_fattura(
     # ---------- HEADER: EMITTENTE ----------
     pdf.set_font("Helvetica", "B", 13)
     pdf.set_xy(10, 10)
-    pdf.cell(0, 6, EMITTENTE["Denominazione"], ln=1)
+    pdf.cell(0, 6, EMITTENTE.get("Denominazione", ""), ln=1)
 
     pdf.set_font("Helvetica", "", 9)
     em_ind = EMITTENTE.get("Indirizzo", "")
@@ -342,7 +344,7 @@ def genera_pdf_fattura(
     pdf.cell(40, 5, _format_val_eur(imponibile), ln=1, align="R")
 
     pdf.set_x(x_left)
-    pdf.cell(60, 5, f"IVA (SU € { _format_val_eur(imponibile) })", ln=0)
+    pdf.cell(60, 5, f"IVA (SU IMPORTO { _format_val_eur(imponibile) })", ln=0)
     pdf.set_x(x_right)
     pdf.cell(40, 5, "+ " + _format_val_eur(iva), ln=1, align="R")
 
@@ -543,7 +545,7 @@ if pagina in [
         "Dicembre",
     ]
     tabs = st.tabs(mesi)
-    idx_mese = date.today().month  # per ora i tab sono solo estetici
+    idx_mese = date.today().month
 
 
 # ==========================
@@ -613,13 +615,18 @@ elif pagina == "Crea nuova fattura":
 
     col1, col2 = st.columns([2, 1])
     with col1:
-        cliente_sel = st.selectbox("Cliente", denominazioni)
+        # selectbox controllata da session_state.cliente_sel
+        if st.session_state.cliente_sel not in denominazioni:
+            st.session_state.cliente_sel = "NUOVO"
+        cliente_sel = st.selectbox(
+            "Cliente",
+            denominazioni,
+            key="cliente_sel",
+        )
     with col2:
         if st.button("➕ Nuovo cliente"):
-            st.session_state.forza_nuovo_cliente = True
-
-    if st.session_state.forza_nuovo_cliente:
-        cliente_sel = "NUOVO"
+            st.session_state.cliente_sel = "NUOVO"
+            st.rerun()
 
     # Dati cliente
     if cliente_sel == "NUOVO":
@@ -644,23 +651,23 @@ elif pagina == "Crea nuova fattura":
             "Provincia": cli_prov,
         }
     else:
-        st.session_state.forza_nuovo_cliente = False
+        # recupero dalla rubrica
         riga_cli = st.session_state.clienti[
             st.session_state.clienti["Denominazione"] == cliente_sel
         ].iloc[0]
-        cli_den = st.text_input("Denominazione", riga_cli["Denominazione"])
-        cli_piva = st.text_input("P.IVA", riga_cli["PIVA"])
+        cli_den = st.text_input("Denominazione", riga_cli.get("Denominazione", ""))
+        cli_piva = st.text_input("P.IVA", riga_cli.get("PIVA", ""))
         cli_cf = st.text_input("Codice Fiscale", riga_cli.get("CF", ""))
         cli_ind = st.text_input(
-            "Indirizzo (via/piazza, civico)", riga_cli["Indirizzo"]
+            "Indirizzo (via/piazza, civico)", riga_cli.get("Indirizzo", "")
         )
         colc1, colc2, colc3 = st.columns(3)
         with colc1:
-            cli_cap = st.text_input("CAP", riga_cli["CAP"])
+            cli_cap = st.text_input("CAP", riga_cli.get("CAP", ""))
         with colc2:
-            cli_com = st.text_input("Comune", riga_cli["Comune"])
+            cli_com = st.text_input("Comune", riga_cli.get("Comune", ""))
         with colc3:
-            cli_prov = st.text_input("Provincia (es. BA)", riga_cli["Provincia"])
+            cli_prov = st.text_input("Provincia (es. BA)", riga_cli.get("Provincia", ""))
         cliente_corrente = {
             "Denominazione": cli_den,
             "PIVA": cli_piva,
@@ -811,7 +818,6 @@ elif pagina == "Crea nuova fattura":
             )
 
             st.session_state.righe_correnti = []
-            st.session_state.forza_nuovo_cliente = False
 
             st.success("✅ Fattura emessa salvata, cliente registrato in Rubrica e PDF generato.")
 
