@@ -471,7 +471,6 @@ PAGINE = [
     "Dashboard",
 ]
 
-# indice di default del radio in base a pagina_corrente
 pagina_default = st.session_state.pagina_corrente
 if pagina_default not in PAGINE:
     pagina_default = "Dashboard"
@@ -486,7 +485,7 @@ with st.sidebar:
         label_visibility="collapsed",
     )
 
-# sincronizzo la pagina corrente con la scelta della sidebar
+# sincronizzo pagina corrente
 st.session_state.pagina_corrente = pagina
 
 # ==========================
@@ -506,7 +505,7 @@ with col_user:
 st.markdown("---")
 
 # ==========================
-# BARRA FRONTALE (bottoni che cambiano pagina)
+# BARRA FRONTALE
 # ==========================
 barra_ricerca = ""
 tabs = None
@@ -530,15 +529,15 @@ if pagina in [
     with col_stato:
         if st.button("STATO"):
             st.session_state.pagina_corrente = "Dashboard"
-            st.experimental_rerun()
+            st.rerun()
     with col_emesse:
         if st.button("EMESSE"):
             st.session_state.pagina_corrente = "Lista documenti"
-            st.experimental_rerun()
+            st.rerun()
     with col_ricevute:
         if st.button("RICEVUTE"):
             st.session_state.pagina_corrente = "Download (documenti inviati)"
-            st.experimental_rerun()
+            st.rerun()
     with col_agg:
         st.button("AGGIORNA")
 
@@ -627,7 +626,6 @@ elif pagina == "Crea nuova fattura":
 
     col1, col2 = st.columns([2, 1])
     with col1:
-        # valore di default in base allo stato
         current_label = st.session_state.cliente_corrente_label
         if current_label not in denominazioni:
             current_label = "NUOVO"
@@ -639,13 +637,12 @@ elif pagina == "Crea nuova fattura":
             index=default_idx,
         )
 
-        # sincronizzo stato
         st.session_state.cliente_corrente_label = cliente_sel
 
     with col2:
         if st.button("➕ Nuovo cliente"):
             st.session_state.cliente_corrente_label = "NUOVO"
-            st.experimental_rerun()
+            st.rerun()
 
     # Dati cliente
     if cliente_sel == "NUOVO":
@@ -722,7 +719,7 @@ elif pagina == "Crea nuova fattura":
         st.session_state.righe_correnti.append(
             {"desc": "", "qta": 1.0, "prezzo": 0.0, "iva": 22}
         )
-        st.experimental_rerun()
+        st.rerun()
 
     imponibile = 0.0
     iva_tot = 0.0
@@ -749,7 +746,7 @@ elif pagina == "Crea nuova fattura":
         with c5:
             if st.button("🗑️", key=f"del_{i}"):
                 st.session_state.righe_correnti.pop(i)
-                st.experimental_rerun()
+                st.rerun()
 
         imp_riga = r["qta"] * r["prezzo"]
         iva_riga = imp_riga * r["iva"] / 100
