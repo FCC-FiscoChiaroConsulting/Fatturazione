@@ -71,6 +71,10 @@ if "righe_correnti" not in st.session_state:
 if "cliente_sel" not in st.session_state:
     st.session_state.cliente_sel = "NUOVO"
 
+# stato di navigazione (pagina corrente)
+if "nav_pagina" not in st.session_state:
+    st.session_state.nav_pagina = "Dashboard"
+
 
 # ==========================
 # FUNZIONI DI SUPPORTO
@@ -344,7 +348,7 @@ def genera_pdf_fattura(
     pdf.cell(40, 5, _format_val_eur(imponibile), ln=1, align="R")
 
     pdf.set_x(x_left)
-    pdf.cell(60, 5, f"IVA (SU IMPORTO { _format_val_eur(imponibile) })", ln=0)
+    pdf.cell(60, 5, f"IVA (SU IMPORTO {_format_val_eur(imponibile)})", ln=0)
     pdf.set_x(x_right)
     pdf.cell(40, 5, "+ " + _format_val_eur(iva), ln=1, align="R")
 
@@ -479,6 +483,7 @@ with st.sidebar:
             "Rubrica",
             "Dashboard",
         ],
+        key="nav_pagina",        # <<--- collegata allo stato di navigazione
         label_visibility="collapsed",
     )
 
@@ -499,7 +504,7 @@ with col_user:
 st.markdown("---")
 
 # ==========================
-# BARRA FRONTALE
+# BARRA FRONTALE (con bottoni che cambiano pagina)
 # ==========================
 barra_ricerca = ""
 tabs = None
@@ -521,11 +526,17 @@ if pagina in [
             label_visibility="collapsed",
         )
     with col_stato:
-        st.button("STATO")
+        if st.button("STATO"):
+            st.session_state.nav_pagina = "Dashboard"
+            st.rerun()
     with col_emesse:
-        st.button("EMESSE")
+        if st.button("EMESSE"):
+            st.session_state.nav_pagina = "Lista documenti"
+            st.rerun()
     with col_ricevute:
-        st.button("RICEVUTE")
+        if st.button("RICEVUTE"):
+            st.session_state.nav_pagina = "Download (documenti inviati)"
+            st.rerun()
     with col_agg:
         st.button("AGGIORNA")
 
@@ -615,7 +626,6 @@ elif pagina == "Crea nuova fattura":
 
     col1, col2 = st.columns([2, 1])
     with col1:
-        # selectbox controllata da session_state.cliente_sel
         if st.session_state.cliente_sel not in denominazioni:
             st.session_state.cliente_sel = "NUOVO"
         cliente_sel = st.selectbox(
@@ -651,7 +661,6 @@ elif pagina == "Crea nuova fattura":
             "Provincia": cli_prov,
         }
     else:
-        # recupero dalla rubrica
         riga_cli = st.session_state.clienti[
             st.session_state.clienti["Denominazione"] == cliente_sel
         ].iloc[0]
