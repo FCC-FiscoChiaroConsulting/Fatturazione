@@ -8,9 +8,9 @@ from fpdf import FPDF
 # CONFIGURAZIONE PAGINA
 # ==========================
 st.set_page_config(
-    page_title="Fisco Chiaro Consulting - Fatture",
+    page_title="Fisco Chiaro Consulting - Fatturazione elettronica",
     layout="wide",
-    page_icon="📄"
+    page_icon="📄",
 )
 
 PRIMARY_BLUE = "#1f77b4"
@@ -21,44 +21,129 @@ os.makedirs(PDF_DIR, exist_ok=True)
 # ==========================
 # STATO DI SESSIONE
 # ==========================
-COLONNE_DOC = ["Tipo", "Numero", "Data", "Cliente", "PIVA",
-               "Importo", "Stato", "UUID", "PDF"]
+COLONNE_DOC = [
+    "Tipo",
+    "Numero",
+    "Data",
+    "Controparte",
+    "Importo",
+    "Stato",
+    "UUID",
+    "PDF",
+]
 
 if "documenti_emessi" not in st.session_state:
     st.session_state.documenti_emessi = pd.DataFrame(columns=COLONNE_DOC)
 
 if "clienti" not in st.session_state:
     st.session_state.clienti = pd.DataFrame(
-        columns=["Denominazione", "PIVA", "Indirizzo"]
-    )
+        columns=["Denominazione", "PIVA", "Indirizzo", "Tipo"]
+    )  # Tipo: Cliente/Fornitore
 
 if "righe_correnti" not in st.session_state:
     st.session_state.righe_correnti = []
 
 # ==========================
+# FUNZIONE PDF
+# ==========================
+
+
+def genera_pdf_fattura(
+    numero: str,
+    data_f: date,
+    cliente: dict,
+    righe: list,
+    imponibile: float,
+    iva: float,
+    totale: float,
+) -> bytes:
+    """Genera PDF semplice della fattura (senza simbolo €)."""
+    pdf = FPDF()
+    pdf.add_page()
+
+    pdf.set_text_color(31, 119, 180)
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, "FISCO CHIARO CONSULTING", ln=1)
+    pdf.set_text_color(0, 0, 0)
+
+    pdf.set_font("Helvetica", "", 11)
+    pdf.cell(0, 8, "Fattura emessa (uso interno / cliente)", ln=1)
+    pdf.cell(0, 8, f"Numero: {numero}", ln=1)
+    pdf.cell(0, 8, f"Data: {data_f.strftime('%d/%m/%Y')}", ln=1)
+    pdf.ln(4)
+
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 8, "Cliente:", ln=1)
+    pdf.set_font("Helvetica", "", 11)
+    pdf.cell(0, 8, cliente.get("Denominazione", "-"), ln=1)
+    pdf.cell(0, 8, f"P.IVA/CF: {cliente.get('PIVA', '-')}", ln=1)
+    if cliente.get("Indirizzo"):
+        pdf.multi_cell(0, 6, cliente["Indirizzo"])
+    pdf.ln(4)
+
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 8, "Righe fattura:", ln=1)
+    pdf.set_font("Helvetica", "", 10)
+
+    for r in righe:
+        desc = (r.get("desc") or "").replace("\n", " ")
+        if len(desc) > 120:
+            desc = desc[:117] + "..."
+        riga_txt = (
+            f"- {desc} | {r.get('qta', 0)} x "
+            f"{r.get('prezzo', 0):.2f} (IVA {r.get('iva', 0)}%)"
+        )
+        pdf.multi_cell(0, 6, riga_txt)
+
+    pdf.ln(4)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 8, "Riepilogo:", ln=1)
+    pdf.set_font("Helvetica", "", 11)
+    pdf.cell(
+        0,
+        6,
+        f"Imponibile: EUR {imponibile:,.2f}".replace(",", "X")
+        .replace(".", ",")
+        .replace("X", "."),
+        ln=1,
+    )
+    pdf.cell(
+        0,
+        6,
+        f"IVA: EUR {iva:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        ln=1,
+    )
+    pdf.cell(
+        0,
+        6,
+        f"Totale: EUR {totale:,.2f}".replace(",", "X")
+        .replace(".", ",")
+        .replace("X", "."),
+        ln=1,
+    )
+
+    pdf.ln(8)
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.multi_cell(0, 4, "Documento generato dall'app Fisco Chiaro Consulting.")
+
+    return pdf.output(dest="S").encode("latin-1")
+
+
+# ==========================
 # SIDEBAR (STILE GESTIONALE)
 # ==========================
 with st.sidebar:
-    st.markdown(
-        f"<h2 style='color:{PRIMARY_BLUE}'>⚙️ Configurazione</h2>",
-        unsafe_allow_html=True,
-    )
-    ambiente = st.selectbox(
-        "Ambiente (placeholder)",
-        ["Sandbox (test)", "Produzione"],
-        index=0,
-    )
-    api_key = st.text_input(
-        "API Key Openapi (non usata in questa versione)",
-        type="password",
-    )
-
-    st.markdown("---")
-    st.markdown("### 📑 Menu")
-
+    st.markdown("### 📄 Documenti")
     pagina = st.radio(
         "",
-        ["Lista documenti", "Crea fattura", "Clienti", "Dashboard"],
+        [
+            "Lista documenti",
+            "Crea nuova fattura",
+            "Download (documenti inviati)",
+            "Carica pacchetto AdE",
+            "Rubrica",
+            "Dashboard",
+        ],
         label_visibility="collapsed",
     )
 
@@ -79,137 +164,83 @@ with col_user:
 st.markdown("---")
 
 # ==========================
-# FUNZIONE PDF
+# BARRA FRONTALE TIPO EFFATTA
 # ==========================
+barra_ricerca = ""
+tabs = None
+idx_mese = date.today().month  # 1-12
 
-
-def genera_pdf_fattura(numero: str, data_f: date, cliente: dict,
-                       righe: list, imponibile: float,
-                       iva: float, totale: float) -> bytes:
-    """Genera il PDF della fattura (senza simbolo € per evitare problemi di font)."""
-    pdf = FPDF()
-    pdf.add_page()
-
-    # intestazione blu
-    pdf.set_text_color(31, 119, 180)
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.cell(0, 10, "FISCO CHIARO CONSULTING", ln=1)
-    pdf.set_text_color(0, 0, 0)
-
-    pdf.set_font("Helvetica", "", 11)
-    pdf.cell(0, 8, "Fattura emessa (uso interno / cliente)", ln=1)
-    pdf.cell(0, 8, f"Numero: {numero}", ln=1)
-    pdf.cell(0, 8, f"Data: {data_f.strftime('%d/%m/%Y')}", ln=1)
-    pdf.ln(4)
-
-    # cliente
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 8, "Cliente:", ln=1)
-    pdf.set_font("Helvetica", "", 11)
-    pdf.cell(0, 8, cliente.get("Denominazione", "-"), ln=1)
-    pdf.cell(0, 8, f"P.IVA/CF: {cliente.get('PIVA', '-')}", ln=1)
-    if cliente.get("Indirizzo"):
-        pdf.multi_cell(0, 6, cliente["Indirizzo"])
-    pdf.ln(4)
-
-    # righe
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 8, "Righe fattura:", ln=1)
-    pdf.set_font("Helvetica", "", 10)
-    for r in righe:
-        desc = (r.get("desc") or "").replace("\n", " ")
-        if len(desc) > 120:
-            desc = desc[:117] + "..."
-        riga_txt = (
-            f"- {desc} | {r.get('qta', 0)} x "
-            f"{r.get('prezzo', 0):.2f} (IVA {r.get('iva', 0)}%)"
+if pagina in [
+    "Lista documenti",
+    "Crea nuova fattura",
+    "Download (documenti inviati)",
+    "Carica pacchetto AdE",
+]:
+    col_search, col_stato, col_emesse, col_ricevute, col_agg = st.columns(
+        [4, 1, 1, 1, 1]
+    )
+    with col_search:
+        barra_ricerca = st.text_input(
+            " ",
+            placeholder="Id fiscale, denominazione, causale, tag",
+            label_visibility="collapsed",
         )
-        pdf.multi_cell(0, 6, riga_txt)
-    pdf.ln(4)
+    with col_stato:
+        st.button("STATO")
+    with col_emesse:
+        st.button("EMESSE")
+    with col_ricevute:
+        st.button("RICEVUTE")
+    with col_agg:
+        st.button("AGGIORNA")
 
-    # riepilogo
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 8, "Riepilogo:", ln=1)
-    pdf.set_font("Helvetica", "", 11)
-    pdf.cell(
-        0,
-        6,
-        f"Imponibile: EUR {imponibile:,.2f}"
-        .replace(",", "X").replace(".", ",").replace("X", "."),
-        ln=1,
-    )
-    pdf.cell(
-        0,
-        6,
-        f"IVA: EUR {iva:,.2f}"
-        .replace(",", "X").replace(".", ",").replace("X", "."),
-        ln=1,
-    )
-    pdf.cell(
-        0,
-        6,
-        f"Totale: EUR {totale:,.2f}"
-        .replace(",", "X").replace(".", ",").replace("X", "."),
-        ln=1,
-    )
-
-    pdf.ln(8)
-    pdf.set_font("Helvetica", "I", 8)
-    pdf.multi_cell(0, 4, "Documento generato dall'app Fisco Chiaro Consulting.")
-
-    return pdf.output(dest="S").encode("latin-1")
-
+    mesi = [
+        "Riepilogo",
+        "Gennaio",
+        "Febbraio",
+        "Marzo",
+        "Aprile",
+        "Maggio",
+        "Giugno",
+        "Luglio",
+        "Agosto",
+        "Settembre",
+        "Ottobre",
+        "Novembre",
+        "Dicembre",
+    ]
+    tabs = st.tabs(mesi)
+    # 0 = Riepilogo, 1-12 mesi. Uso il mese corrente.
+    idx_mese = date.today().month
 
 # ==========================
-# PAGINA 1: LISTA DOCUMENTI
+# PAGINA: LISTA DOCUMENTI
 # ==========================
 if pagina == "Lista documenti":
     st.subheader("Lista documenti")
 
-    col_cerca, col_stato, col_em, col_agg = st.columns([3, 2, 1, 1])
-    with col_cerca:
-        testo = st.text_input("Ricerca", placeholder="Numero, cliente...")
-    with col_stato:
-        stato_filtro = st.selectbox(
-            "Stato",
-            ["TUTTI", "Bozza", "Inviata", "Registrata"],
-        )
-    with col_em:
-        show_emesse = st.toggle("Emesse", value=True)
-    with col_agg:
-        refresh = st.button("Aggiorna")
+    if tabs is not None:
+        with tabs[idx_mese]:
+            df_e = st.session_state.documenti_emessi.copy()
 
-    mesi = [
-        "Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
-        "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre",
-    ]
-    tabs = st.tabs(mesi)
-    idx_mese = date.today().month - 1
-
-    with tabs[idx_mese]:
-        frames = []
-        if show_emesse and not st.session_state.documenti_emessi.empty:
-            frames.append(st.session_state.documenti_emessi.copy())
-
-        if frames:
-            df = pd.concat(frames, ignore_index=True)
-            if testo:
-                mask = (
-                    df["Numero"].astype(str)
-                    .str.contains(testo, case=False, na=False)
-                    | df["Cliente"].astype(str)
-                    .str.contains(testo, case=False, na=False)
+            if not df_e.empty:
+                if barra_ricerca:
+                    mask = (
+                        df_e["Numero"]
+                        .astype(str)
+                        .str.contains(barra_ricerca, case=False, na=False)
+                        | df_e["Controparte"]
+                        .astype(str)
+                        .str.contains(barra_ricerca, case=False, na=False)
+                    )
+                    df_e = df_e[mask]
+                st.dataframe(
+                    df_e.drop(columns=["PDF"]),
+                    use_container_width=True,
+                    height=400,
                 )
-                df = df[mask]
-            if stato_filtro != "TUTTI":
-                df = df[df["Stato"] == stato_filtro]
-            st.dataframe(
-                df.drop(columns=["PDF"]),
-                use_container_width=True,
-                height=400,
-            )
-        else:
-            st.info("Nessun documento emesso presente.")
+            else:
+                st.info("Nessun documento emesso presente.")
 
     st.markdown("### 📄 Download PDF fatture emesse")
     df_e = st.session_state.documenti_emessi
@@ -221,10 +252,7 @@ if pagina == "Lista documenti":
             st.caption("Le fatture emesse non hanno ancora PDF associati.")
         else:
             numeri = df_e_pdf["Numero"].tolist()
-            scelta_num = st.selectbox(
-                "Seleziona fattura emessa",
-                numeri,
-            )
+            scelta_num = st.selectbox("Seleziona fattura emessa", numeri)
             if scelta_num:
                 riga = df_e_pdf[df_e_pdf["Numero"] == scelta_num].iloc[0]
                 pdf_path = riga["PDF"]
@@ -241,12 +269,11 @@ if pagina == "Lista documenti":
                     st.warning("Il file PDF indicato non esiste più sul disco.")
 
 # ==========================
-# PAGINA 2: CREA FATTURA
+# PAGINA: CREA NUOVA FATTURA
 # ==========================
-elif pagina == "Crea fattura":
+elif pagina == "Crea nuova fattura":
     st.subheader("Crea nuova fattura emessa")
 
-    # selezione cliente
     col1, col2 = st.columns([2, 1])
     denominazioni = ["NUOVO"] + st.session_state.clienti["Denominazione"].tolist()
     with col1:
@@ -286,7 +313,6 @@ elif pagina == "Crea fattura":
         data_f = st.date_input("Data fattura", date.today())
 
     st.markdown("### Righe fattura")
-
     if st.button("➕ Aggiungi riga"):
         st.session_state.righe_correnti.append(
             {"desc": "", "qta": 1.0, "prezzo": 0.0, "iva": 22}
@@ -349,10 +375,24 @@ elif pagina == "Crea fattura":
         elif not st.session_state.righe_correnti:
             st.error("Inserisci almeno una riga di fattura.")
         else:
-            if cliente_sel == "NUOVO" and cliente_corrente["Denominazione"]:
-                nuova_cli = pd.DataFrame([cliente_corrente])
+            if (
+                cliente_sel == "NUOVO"
+                and cliente_corrente["Denominazione"]
+                and cliente_corrente["Denominazione"]
+                not in st.session_state.clienti["Denominazione"].tolist()
+            ):
+                nuovo_cli = pd.DataFrame(
+                    [
+                        {
+                            "Denominazione": cliente_corrente["Denominazione"],
+                            "PIVA": cliente_corrente["PIVA"],
+                            "Indirizzo": cliente_corrente["Indirizzo"],
+                            "Tipo": "Cliente",
+                        }
+                    ]
+                )
                 st.session_state.clienti = pd.concat(
-                    [st.session_state.clienti, nuova_cli],
+                    [st.session_state.clienti, nuovo_cli],
                     ignore_index=True,
                 )
 
@@ -376,8 +416,7 @@ elif pagina == "Crea fattura":
                         "Tipo": "Emessa",
                         "Numero": numero,
                         "Data": str(data_f),
-                        "Cliente": cliente_corrente["Denominazione"],
-                        "PIVA": cliente_corrente["PIVA"],
+                        "Controparte": cliente_corrente["Denominazione"],
                         "Importo": totale,
                         "Stato": stato,
                         "UUID": "",
@@ -401,41 +440,85 @@ elif pagina == "Crea fattura":
             )
 
 # ==========================
-# PAGINA 3: CLIENTI
+# PAGINA: DOWNLOAD DOCUMENTI INVIATI
 # ==========================
-elif pagina == "Clienti":
-    st.subheader("Rubrica clienti")
+elif pagina == "Download (documenti inviati)":
+    st.subheader("Download documenti inviati")
+    st.info("Qui in futuro potrai elencare e scaricare i documenti inviati allo SdI.")
 
-    with st.form("nuovo_cliente"):
-        col1, col2 = st.columns(2)
+# ==========================
+# PAGINA: CARICA PACCHETTO ADE
+# ==========================
+elif pagina == "Carica pacchetto AdE":
+    st.subheader("Carica pacchetto AdE (ZIP da cassetto fiscale)")
+    uploaded_zip = st.file_uploader(
+        "Carica file ZIP (fatture + metadati)", type=["zip"]
+    )
+    if uploaded_zip:
+        st.write("Nome file caricato:", uploaded_zip.name)
+        st.info("Parsing del pacchetto non ancora implementato in questa versione.")
+
+# ==========================
+# PAGINA: RUBRICA
+# ==========================
+elif pagina == "Rubrica":
+    st.subheader("Rubrica (Clienti / Fornitori)")
+
+    colf1, colf2 = st.columns(2)
+    with colf1:
+        filtra_clienti = st.checkbox("Mostra clienti", value=True)
+    with colf2:
+        filtra_fornitori = st.checkbox("Mostra fornitori", value=True)
+
+    with st.form("nuovo_contatto"):
+        col1, col2, col3 = st.columns(3)
         with col1:
             den = st.text_input("Denominazione")
         with col2:
             piva = st.text_input("P.IVA/CF")
-        ind = st.text_area("Indirizzo", height=70)
-        if st.form_submit_button("💾 Salva cliente"):
+        with col3:
+            tipo = st.selectbox("Tipo", ["Cliente", "Fornitore"])
+        ind = st.text_area("Indirizzo", height=60)
+        if st.form_submit_button("💾 Salva contatto"):
             nuovo = pd.DataFrame(
-                [{"Denominazione": den, "PIVA": piva, "Indirizzo": ind}]
+                [
+                    {
+                        "Denominazione": den,
+                        "PIVA": piva,
+                        "Indirizzo": ind,
+                        "Tipo": tipo,
+                    }
+                ]
             )
             st.session_state.clienti = pd.concat(
                 [st.session_state.clienti, nuovo],
                 ignore_index=True,
             )
-            st.success("Cliente salvato")
+            st.success("Contatto salvato")
 
-    if not st.session_state.clienti.empty:
-        st.dataframe(st.session_state.clienti, use_container_width=True)
+    df_c = st.session_state.clienti.copy()
+    if not df_c.empty:
+        mask = []
+        for _, r in df_c.iterrows():
+            if r["Tipo"] == "Cliente" and filtra_clienti:
+                mask.append(True)
+            elif r["Tipo"] == "Fornitore" and filtra_fornitori:
+                mask.append(True)
+            else:
+                mask.append(False)
+        df_c = df_c[pd.Series(mask)]
+        st.dataframe(df_c, use_container_width=True)
     else:
-        st.info("Nessun cliente in rubrica.")
+        st.info("Nessun contatto in rubrica.")
 
 # ==========================
-# PAGINA 4: DASHBOARD
+# PAGINA: DASHBOARD
 # ==========================
 else:
     st.subheader("Dashboard")
     df_e = st.session_state.documenti_emessi
     num_emesse = len(df_e)
-    tot_emesse = df_e["Importo"].sum() if not df_e.empty else 0
+    tot_emesse = df_e["Importo"].sum() if not df_e.empty else 0.0
 
     col1, col2 = st.columns(2)
     col1.metric("Fatture emesse (app)", num_emesse)
@@ -446,5 +529,5 @@ else:
 
 st.markdown("---")
 st.caption(
-    "Fisco Chiaro Consulting – Emesse gestite dall'app; PDF generati automaticamente."
+    "Fisco Chiaro Consulting – Emesse gestite dall'app, PDF generati automaticamente."
 )
