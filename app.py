@@ -43,8 +43,8 @@ COLONNE_DOC = [
     "Controparte",
     "Imponibile",
     "IVA",
-    "Importo",
-    "TipoXML",  # codice XML (es. TD01)
+    "Importo",   # totale a pagare
+    "TipoXML",   # TD01/TD02/TD04/TD05
     "Stato",
     "UUID",
     "PDF",
@@ -60,7 +60,7 @@ CLIENTI_COLONNE = [
     "Provincia",
     "CodiceDestinatario",
     "PEC",
-    "Tipo",
+    "Tipo",  # Cliente/Fornitore
 ]
 
 if "documenti_emessi" not in st.session_state:
@@ -107,10 +107,10 @@ def mostra_anteprima_pdf(pdf_bytes: bytes, altezza: int = 600) -> None:
     try:
         b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
         pdf_display = f"""
-        <iframe src="data:application/pdf;base64,{b64_pdf}"
-                width="100%" height="{altezza}" type="application/pdf">
-        </iframe>
-        """
+<iframe src="data:application/pdf;base64,{b64_pdf}"
+        width="100%" height="{altezza}" type="application/pdf">
+</iframe>
+"""
         st.markdown(pdf_display, unsafe_allow_html=True)
     except Exception as e:  # pragma: no cover
         st.warning(f"Impossibile mostrare l'anteprima PDF: {e}")
@@ -270,7 +270,7 @@ def genera_pdf_fattura(
     pdf.cell(0, 8, "FATTURA", ln=1)
     pdf.set_font("Helvetica", "", 10)
     pdf.cell(0, 5, f"Numero: {numero}", ln=1)
-    pdf.cell(0, 5, f"Data: {data_f.strftime("%d/%m/%Y")}", ln=1)
+    pdf.cell(0, 5, f"Data: {data_f.strftime('%d/%m/%Y')}", ln=1)
     pdf.ln(4)
 
     # Dati cliente
@@ -349,8 +349,11 @@ def genera_pdf_fattura(
         "Copia di cortesia senza valore fiscale.",
     )
 
-    data_bytes = pdf.output(dest="S").encode("latin1")
-    return data_bytes
+    out = pdf.output(dest="S")
+    # FPDF può restituire bytes/bytearray o stringa a seconda della versione
+    if isinstance(out, (bytes, bytearray)):
+        return bytes(out)
+    return out.encode("latin1")
 
 
 # ==========================
