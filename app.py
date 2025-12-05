@@ -37,14 +37,14 @@ if "documenti_emessi" not in st.session_state:
 
 if "clienti" not in st.session_state:
     st.session_state.clienti = pd.DataFrame(
-        columns=["Denominazione", "PIVA", "Indirizzo", "Tipo"]
-    )  # Tipo: Cliente/Fornitore
+        columns=["Denominazione", "PIVA", "Indirizzo", "Tipo"]  # Tipo: Cliente/Fornitore
+    )
 
 if "righe_correnti" not in st.session_state:
     st.session_state.righe_correnti = []
 
 # ==========================
-# FUNZIONE PDF
+# FUNZIONE PDF (CORRETTA)
 # ==========================
 
 
@@ -110,7 +110,9 @@ def genera_pdf_fattura(
     pdf.cell(
         0,
         6,
-        f"IVA: EUR {iva:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        f"IVA: EUR {iva:,.2f}".replace(",", "X")
+        .replace(".", ",")
+        .replace("X", "."),
         ln=1,
     )
     pdf.cell(
@@ -126,11 +128,11 @@ def genera_pdf_fattura(
     pdf.set_font("Helvetica", "I", 8)
     pdf.multi_cell(0, 4, "Documento generato dall'app Fisco Chiaro Consulting.")
 
-    return pdf.output(dest="S").encode("latin-1")
-
+    data = pdf.output(dest="S")  # bytearray/bytes
+    return bytes(data)
 
 # ==========================
-# SIDEBAR (STILE GESTIONALE)
+# SIDEBAR (STILE EFFATTA)
 # ==========================
 with st.sidebar:
     st.markdown("### 📄 Documenti")
@@ -210,7 +212,6 @@ if pagina in [
         "Dicembre",
     ]
     tabs = st.tabs(mesi)
-    # 0 = Riepilogo, 1-12 mesi. Uso il mese corrente.
     idx_mese = date.today().month
 
 # ==========================
@@ -440,15 +441,12 @@ elif pagina == "Crea nuova fattura":
             )
 
 # ==========================
-# PAGINA: DOWNLOAD DOCUMENTI INVIATI
+# PAGINE EXTRA (download / pacchetto AdE / rubrica / dashboard)
 # ==========================
 elif pagina == "Download (documenti inviati)":
     st.subheader("Download documenti inviati")
-    st.info("Qui in futuro potrai elencare e scaricare i documenti inviati allo SdI.")
+    st.info("Area placeholder: qui potrai elencare e scaricare i documenti inviati allo SdI.")
 
-# ==========================
-# PAGINA: CARICA PACCHETTO ADE
-# ==========================
 elif pagina == "Carica pacchetto AdE":
     st.subheader("Carica pacchetto AdE (ZIP da cassetto fiscale)")
     uploaded_zip = st.file_uploader(
@@ -458,9 +456,6 @@ elif pagina == "Carica pacchetto AdE":
         st.write("Nome file caricato:", uploaded_zip.name)
         st.info("Parsing del pacchetto non ancora implementato in questa versione.")
 
-# ==========================
-# PAGINA: RUBRICA
-# ==========================
 elif pagina == "Rubrica":
     st.subheader("Rubrica (Clienti / Fornitori)")
 
@@ -511,10 +506,7 @@ elif pagina == "Rubrica":
     else:
         st.info("Nessun contatto in rubrica.")
 
-# ==========================
-# PAGINA: DASHBOARD
-# ==========================
-else:
+else:  # Dashboard
     st.subheader("Dashboard")
     df_e = st.session_state.documenti_emessi
     num_emesse = len(df_e)
@@ -531,3 +523,5 @@ st.markdown("---")
 st.caption(
     "Fisco Chiaro Consulting – Emesse gestite dall'app, PDF generati automaticamente."
 )
+
+  
